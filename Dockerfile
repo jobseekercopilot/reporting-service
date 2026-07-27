@@ -7,7 +7,8 @@ RUN mvn --batch-mode --no-transfer-progress clean verify
 
 FROM eclipse-temurin:17-jre-alpine
 WORKDIR /app
-RUN apk add --no-cache curl \
+RUN apk upgrade --no-cache \
+    && apk add --no-cache curl \
     && addgroup -S application \
     && adduser -S -G application application
 COPY --from=build --chown=application:application /app/target/reporting-service-2.0.0.jar app.jar

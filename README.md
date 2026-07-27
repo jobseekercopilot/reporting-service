@@ -26,6 +26,29 @@ mvn -B clean verify
 ```
 
 The build is reproducible from source and does not require locally supplied JARs.
+It also writes a CycloneDX 1.6 runtime SBOM to
+`target/classes/META-INF/sbom/application.cdx.json` and packages it in the
+application JAR.
+
+The complete local dependency-security gate is:
+
+```bash
+./scripts/verify-supply-chain.sh
+```
+
+The gate uses a pinned, free local Trivy container and never exposes the Docker
+socket to the scanner. See
+[`docs/SECURITY_VERIFICATION.md`](docs/SECURITY_VERIFICATION.md) for the dated
+results, offline mode and remaining image/TLS evidence.
+
+Build and scan the complete local image through the least-privilege archive
+boundary:
+
+```bash
+docker build --tag jobseekercopilot/reporting-service:local .
+REPORTING_TRIVY_OFFLINE=true \
+  ./scripts/verify-image-security.sh jobseekercopilot/reporting-service:local
+```
 
 Runtime startup fails closed unless both credentials are present, at least 32
 bytes long, and distinct:
