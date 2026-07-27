@@ -8,6 +8,7 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.enums.ParameterIn;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -35,7 +36,7 @@ public class ReportingController {
             @Parameter(in = ParameterIn.HEADER, name = OWNER_HEADER, required = true)
             @RequestHeader(OWNER_HEADER) String owner,
             @RequestHeader("Authorization") String authorization) {
-        return ResponseEntity.ok(reportingService.summary(
+        return privateResponse(reportingService.summary(
                 owner,
                 bearerToken(authorization)));
     }
@@ -51,12 +52,19 @@ public class ReportingController {
             @Parameter(in = ParameterIn.HEADER, name = OWNER_HEADER, required = true)
             @RequestHeader(OWNER_HEADER) String owner,
             @RequestHeader("Authorization") String authorization) {
-        return ResponseEntity.ok(reportingService.ucJournal(
+        return privateResponse(reportingService.ucJournal(
                 owner,
                 bearerToken(authorization)));
     }
 
     private String bearerToken(String authorization) {
         return authorization.substring("Bearer ".length()).trim();
+    }
+
+    private <T> ResponseEntity<T> privateResponse(T body) {
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .header("X-Content-Type-Options", "nosniff")
+                .body(body);
     }
 }

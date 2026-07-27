@@ -37,6 +37,10 @@ Reporting endpoints accept calls only from the Reporting Gateway. A call must
 carry the exact gateway service token, one non-empty `X-Report-Owner` header, and
 one bearer authorization value.
 
+Runtime OpenAPI and Swagger UI endpoints are disabled by default. The reviewed
+contract remains available in source; operators may enable the runtime endpoints
+explicitly with `OPENAPI_DOCS_ENABLED=true` or `SWAGGER_UI_ENABLED=true`.
+
 ## API contract
 
 The reviewed version 2 contract is in `contracts/openapi.json`. The test suite

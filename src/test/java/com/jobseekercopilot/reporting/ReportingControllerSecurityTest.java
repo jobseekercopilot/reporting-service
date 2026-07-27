@@ -1,8 +1,10 @@
 package com.jobseekercopilot.reporting;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -62,6 +64,8 @@ class ReportingControllerSecurityTest {
                         .header("X-User-Id", "forged-user")
                         .header("Authorization", "Bearer access-token"))
                 .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", containsString("no-store")))
+                .andExpect(header().string("X-Content-Type-Options", "nosniff"))
                 .andExpect(jsonPath("$.userId").value("subject-123"))
                 .andExpect(jsonPath("$.applicationSummary.applied").value(1));
     }
@@ -79,5 +83,11 @@ class ReportingControllerSecurityTest {
                         .header("X-Report-Owner", "subject-123")
                         .header("Authorization", "Bearer access-token"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void runtimeOpenApiIsDisabledByDefault() throws Exception {
+        mockMvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isNotFound());
     }
 }

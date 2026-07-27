@@ -16,7 +16,8 @@ import org.springframework.test.web.servlet.MockMvc;
         "reporting.security.gateway-token="
                 + "test-only-reporting-gateway-token-32-bytes",
         "reporting.security.application-tracker-reader-token="
-                + "test-only-application-reader-token-32-bytes"
+                + "test-only-application-reader-token-32-bytes",
+        "springdoc.api-docs.enabled=true"
 })
 @AutoConfigureMockMvc
 class OpenApiExportTest {

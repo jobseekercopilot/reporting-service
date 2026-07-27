@@ -16,6 +16,13 @@ reporting:
     gateway-token: ${REPORTING_GATEWAY_SERVICE_TOKEN:}
     application-tracker-reader-token: ${APPLICATION_TRACKER_READER_TOKEN:}
 
+springdoc:
+  api-docs:
+    enabled: ${OPENAPI_DOCS_ENABLED:false}
+    version: openapi-3-0
+  swagger-ui:
+    enabled: ${SWAGGER_UI_ENABLED:false}
+
 management:
   endpoints:
     web:
