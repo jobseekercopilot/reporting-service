@@ -17,7 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/reports")
 public class ReportingController {
-    private static final String USER_ID_HEADER = "X-User-Id";
+    private static final String OWNER_HEADER = "X-Report-Owner";
     private final ReportingService reportingService;
 
     public ReportingController(ReportingService reportingService) {
@@ -28,25 +28,35 @@ public class ReportingController {
     @Operation(summary = "Get reporting summary")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Reporting summary returned"),
-            @ApiResponse(responseCode = "400", description = "Missing X-User-Id header"),
+            @ApiResponse(responseCode = "401", description = "Authorized Gateway required"),
             @ApiResponse(responseCode = "502", description = "Downstream service failed")
     })
     public ResponseEntity<ReportingSummaryResponse> summary(
-            @Parameter(in = ParameterIn.HEADER, name = USER_ID_HEADER, required = true)
-            @RequestHeader(USER_ID_HEADER) String userId) {
-        return ResponseEntity.ok(reportingService.summary(userId));
+            @Parameter(in = ParameterIn.HEADER, name = OWNER_HEADER, required = true)
+            @RequestHeader(OWNER_HEADER) String owner,
+            @RequestHeader("Authorization") String authorization) {
+        return ResponseEntity.ok(reportingService.summary(
+                owner,
+                bearerToken(authorization)));
     }
 
     @GetMapping("/uc-journal")
     @Operation(summary = "Get deterministic Universal Credit journal text")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "UC journal text returned"),
-            @ApiResponse(responseCode = "400", description = "Missing X-User-Id header"),
+            @ApiResponse(responseCode = "401", description = "Authorized Gateway required"),
             @ApiResponse(responseCode = "502", description = "Downstream service failed")
     })
     public ResponseEntity<UcJournalResponse> ucJournal(
-            @Parameter(in = ParameterIn.HEADER, name = USER_ID_HEADER, required = true)
-            @RequestHeader(USER_ID_HEADER) String userId) {
-        return ResponseEntity.ok(reportingService.ucJournal(userId));
+            @Parameter(in = ParameterIn.HEADER, name = OWNER_HEADER, required = true)
+            @RequestHeader(OWNER_HEADER) String owner,
+            @RequestHeader("Authorization") String authorization) {
+        return ResponseEntity.ok(reportingService.ucJournal(
+                owner,
+                bearerToken(authorization)));
+    }
+
+    private String bearerToken(String authorization) {
+        return authorization.substring("Bearer ".length()).trim();
     }
 }

@@ -1,13 +1,11 @@
 package com.jobseekercopilot.reporting.service;
 
-import com.jobseekercopilot.generated.userprofileservice.api.UserProfilesApi;
-import com.jobseekercopilot.generated.userprofileservice.model.Aspirations;
-import com.jobseekercopilot.generated.userprofileservice.model.UserProfile;
 import com.jobseekercopilot.reporting.dto.ActivityTimelineItem;
 import com.jobseekercopilot.reporting.dto.ApplicationSummary;
 import com.jobseekercopilot.reporting.dto.CommitmentProgress;
 import com.jobseekercopilot.reporting.dto.ReportingSummaryResponse;
 import com.jobseekercopilot.reporting.dto.UcJournalResponse;
+import com.jobseekercopilot.reporting.security.ReportingServiceCredentials;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.DayOfWeek;
@@ -22,6 +20,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
@@ -35,46 +35,50 @@ public class ReportingService {
     private static final BigDecimal DEFAULT_REQUIRED_HOURS = BigDecimal.valueOf(35);
 
     private final RestTemplate restTemplate;
-    private final UserProfilesApi userProfilesApi;
+    private final ReportingServiceCredentials credentials;
     private final String applicationTrackerBaseUrl;
+    private final String userProfileBaseUrl;
 
-    public ReportingService(RestTemplate restTemplate,
-                            UserProfilesApi userProfilesApi,
-                            @Value("${services.application-tracker-service.base-url:http://application-tracker-service:8088}") String applicationTrackerBaseUrl) {
+    public ReportingService(
+            RestTemplate restTemplate,
+            ReportingServiceCredentials credentials,
+            @Value("${services.application-tracker-service.base-url:http://application-tracker-service:8088}")
+            String applicationTrackerBaseUrl,
+            @Value("${services.user-profile-service.base-url:http://user-profile-service:8085}")
+            String userProfileBaseUrl) {
         this.restTemplate = restTemplate;
-        this.userProfilesApi = userProfilesApi;
+        this.credentials = credentials;
         this.applicationTrackerBaseUrl = applicationTrackerBaseUrl;
+        this.userProfileBaseUrl = userProfileBaseUrl;
     }
 
-    public ReportingSummaryResponse summary(String userId) {
+    public ReportingSummaryResponse summary(String owner, String accessToken) {
         long startedAt = System.nanoTime();
-        log.info("Reporting summary generation started userId={}", userId);
-        validateUserId(userId);
-        List<ApplicationRecord> applications = applicationsFor(userId);
-        UserProfile profile = profileFor(userId);
+        log.info("Reporting summary generation started");
+        validateOwner(owner);
+        List<ApplicationRecord> applications = applicationsFor(owner);
+        UserProfileView profile = profileFor(accessToken);
         List<ActivityTimelineItem> timeline = timeline(applications);
-        log.info("Reporting summary generation completed userId={} applicationCount={} timelineCount={} durationMs={}",
-                userId,
+        log.info("Reporting summary generation completed applicationCount={} timelineCount={} durationMs={}",
                 applications.size(),
                 timeline.size(),
                 (System.nanoTime() - startedAt) / 1_000_000);
         return new ReportingSummaryResponse(
-                userId,
+                owner,
                 applicationSummary(applications),
                 timeline,
                 commitmentProgress(applications, profile),
                 journalText(timeline));
     }
 
-    public UcJournalResponse ucJournal(String userId) {
+    public UcJournalResponse ucJournal(String owner, String accessToken) {
         long startedAt = System.nanoTime();
-        validateUserId(userId);
-        List<ActivityTimelineItem> timeline = timeline(applicationsFor(userId));
-        log.info("UC journal generation completed userId={} timelineCount={} durationMs={}",
-                userId,
+        validateOwner(owner);
+        List<ActivityTimelineItem> timeline = timeline(applicationsFor(owner));
+        log.info("UC journal generation completed timelineCount={} durationMs={}",
                 timeline.size(),
                 (System.nanoTime() - startedAt) / 1_000_000);
-        return new UcJournalResponse(userId, journalText(timeline));
+        return new UcJournalResponse(owner, journalText(timeline));
     }
 
     ApplicationSummary applicationSummary(List<ApplicationRecord> applications) {
@@ -107,7 +111,9 @@ public class ReportingService {
                 .orElse("");
     }
 
-    CommitmentProgress commitmentProgress(List<ApplicationRecord> applications, UserProfile profile) {
+    CommitmentProgress commitmentProgress(
+            List<ApplicationRecord> applications,
+            UserProfileView profile) {
         // V1 estimate: tracker statuses are converted to indicative work-search hours until detailed activity logging exists.
         BigDecimal requiredHours = requiredHours(profile);
         BigDecimal completedHours = applications.stream()
@@ -130,48 +136,53 @@ public class ReportingService {
         return new CommitmentProgress(requiredHours, completedHours, remainingHours, percentage, periodStart, periodEnd, remainingText);
     }
 
-    private List<ApplicationRecord> applicationsFor(String userId) {
+    private List<ApplicationRecord> applicationsFor(String owner) {
         long startedAt = System.nanoTime();
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("X-Service-Token", credentials.applicationTrackerReaderToken());
+        headers.set("X-Application-Owner", owner);
         List<ApplicationRecord> applications = restTemplate.exchange(
                 applicationTrackerBaseUrl + "/api/v1/applications/user/{userId}",
                 HttpMethod.GET,
-                null,
+                new HttpEntity<>(headers),
                 new ParameterizedTypeReference<List<ApplicationRecord>>() {},
-                userId).getBody();
+                owner).getBody();
         List<ApplicationRecord> safeApplications = applications == null ? List.of() : applications;
-        log.info("Application tracker reporting lookup completed userId={} count={} durationMs={}",
-                userId,
+        log.info("Application Tracker reporting lookup completed count={} durationMs={}",
                 safeApplications.size(),
                 (System.nanoTime() - startedAt) / 1_000_000);
         return safeApplications;
     }
 
-    private UserProfile profileFor(String userId) {
+    private UserProfileView profileFor(String accessToken) {
         long startedAt = System.nanoTime();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(accessToken);
         try {
-            UserProfile profile = userProfilesApi.getMyProfile(userId);
-            log.info("User profile reporting lookup completed userId={} found={} durationMs={}",
-                    userId,
+            UserProfileView profile = restTemplate.exchange(
+                    userProfileBaseUrl + "/api/profiles/me",
+                    HttpMethod.GET,
+                    new HttpEntity<>(headers),
+                    UserProfileView.class).getBody();
+            log.info("User profile reporting lookup completed found={} durationMs={}",
                     profile != null,
                     (System.nanoTime() - startedAt) / 1_000_000);
             return profile;
         } catch (HttpClientErrorException.NotFound exception) {
-            log.warn("User profile reporting lookup not found userId={} durationMs={}",
-                    userId,
+            log.warn("User profile reporting lookup not found durationMs={}",
                     (System.nanoTime() - startedAt) / 1_000_000);
             return null;
         } catch (RestClientException exception) {
-            log.warn("User profile reporting lookup failed userId={} durationMs={} error={}",
-                    userId,
+            log.warn("User profile reporting lookup failed durationMs={} error={}",
                     (System.nanoTime() - startedAt) / 1_000_000,
                     exception.getClass().getSimpleName());
             return null;
         }
     }
 
-    private void validateUserId(String userId) {
-        if (userId == null || userId.isBlank()) {
-            throw new IllegalArgumentException("X-User-Id header is required");
+    private void validateOwner(String owner) {
+        if (owner == null || owner.isBlank()) {
+            throw new IllegalArgumentException("Validated report owner is required");
         }
     }
 
@@ -240,15 +251,23 @@ public class ReportingService {
             LocalDateTime appliedAt) {
     }
 
-    private BigDecimal requiredHours(UserProfile profile) {
-        if (profile == null || profile.getAspirations() == null || profile.getAspirations().getTargetWeeklyHours() == null) {
+    record UserProfileView(AspirationsView aspirations) {
+    }
+
+    record AspirationsView(String targetWeeklyHours) {
+    }
+
+    private BigDecimal requiredHours(UserProfileView profile) {
+        if (profile == null
+                || profile.aspirations() == null
+                || profile.aspirations().targetWeeklyHours() == null) {
             return DEFAULT_REQUIRED_HOURS;
         }
-        Aspirations.TargetWeeklyHoursEnum target = profile.getAspirations().getTargetWeeklyHours();
-        return switch (target) {
-            case FULL_TIME, FLEXIBLE -> DEFAULT_REQUIRED_HOURS;
-            case PART_TIME_16_30 -> BigDecimal.valueOf(30);
-            case PART_TIME_UNDER_16 -> BigDecimal.valueOf(16);
+        return switch (profile.aspirations().targetWeeklyHours()) {
+            case "FULL_TIME", "FLEXIBLE" -> DEFAULT_REQUIRED_HOURS;
+            case "PART_TIME_16_30" -> BigDecimal.valueOf(30);
+            case "PART_TIME_UNDER_16" -> BigDecimal.valueOf(16);
+            default -> DEFAULT_REQUIRED_HOURS;
         };
     }
 

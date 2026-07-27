@@ -1,19 +1,38 @@
 package com.jobseekercopilot.reporting.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import com.jobseekercopilot.generated.userprofileservice.model.Aspirations;
-import com.jobseekercopilot.generated.userprofileservice.model.UserProfile;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+
 import com.jobseekercopilot.reporting.dto.ActivityTimelineItem;
 import com.jobseekercopilot.reporting.dto.ApplicationSummary;
 import com.jobseekercopilot.reporting.dto.CommitmentProgress;
+import com.jobseekercopilot.reporting.dto.ReportingSummaryResponse;
+import com.jobseekercopilot.reporting.security.ReportingServiceCredentials;
+import com.jobseekercopilot.reporting.service.ReportingService.AspirationsView;
 import com.jobseekercopilot.reporting.service.ReportingService.ApplicationRecord;
+import com.jobseekercopilot.reporting.service.ReportingService.UserProfileView;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.RestTemplate;
 
 class ReportingServiceTest {
-    private final ReportingService service = new ReportingService(null, null, "http://application-tracker-service:8088");
+    private static final String GATEWAY_TOKEN =
+            "test-only-reporting-gateway-token-32-bytes";
+    private static final String READER_TOKEN =
+            "test-only-application-reader-token-32-bytes";
+    private final ReportingService service = new ReportingService(
+            null,
+            new ReportingServiceCredentials(GATEWAY_TOKEN, READER_TOKEN),
+            "http://application-tracker-service:8088",
+            "http://user-profile-service:8085");
 
     @Test
     void countsApplicationStatuses() {
@@ -64,8 +83,8 @@ class ReportingServiceTest {
 
     @Test
     void estimatesCommitmentProgressFromProfileWeeklyHours() {
-        UserProfile profile = new UserProfile()
-                .aspirations(new Aspirations().targetWeeklyHours(Aspirations.TargetWeeklyHoursEnum.PART_TIME_16_30));
+        UserProfileView profile = new UserProfileView(
+                new AspirationsView("PART_TIME_16_30"));
 
         CommitmentProgress progress = service.commitmentProgress(List.of(
                 record("DOCUMENTS_GENERATED", "Developer", "A", 1),
@@ -78,6 +97,55 @@ class ReportingServiceTest {
         assertThat(progress.remainingHours()).isEqualByComparingTo("25.25");
         assertThat(progress.percentageComplete()).isEqualTo(16);
         assertThat(progress.remainingText()).isEqualTo("25.25 hours remaining this week.");
+    }
+
+    @Test
+    void ownerScopesTrackerAndValidatedBearerScopesProfile() {
+        RestTemplate restTemplate = new RestTemplate();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(restTemplate).build();
+        server.expect(requestTo(
+                        "http://application-tracker-service:8088"
+                        + "/api/v1/applications/user/subject-123"))
+                .andExpect(method(HttpMethod.GET))
+                .andExpect(header("X-Service-Token", READER_TOKEN))
+                .andExpect(header("X-Application-Owner", "subject-123"))
+                .andRespond(withSuccess(
+                        """
+                        [{
+                          "id": "application-1",
+                          "userId": "subject-123",
+                          "jobTitle": "Developer",
+                          "companyName": "Example Ltd",
+                          "status": "APPLIED",
+                          "createdAt": "2026-10-01T09:00:00",
+                          "updatedAt": "2026-10-01T10:00:00",
+                          "appliedAt": "2026-10-01T11:00:00"
+                        }]
+                        """,
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo("http://user-profile-service:8085/api/profiles/me"))
+                .andExpect(method(HttpMethod.GET))
+                .andExpect(header("Authorization", "Bearer access-token"))
+                .andRespond(withSuccess(
+                        """
+                        {"aspirations":{"targetWeeklyHours":"PART_TIME_16_30"}}
+                        """,
+                        MediaType.APPLICATION_JSON));
+        ReportingService boundary = new ReportingService(
+                restTemplate,
+                new ReportingServiceCredentials(GATEWAY_TOKEN, READER_TOKEN),
+                "http://application-tracker-service:8088",
+                "http://user-profile-service:8085");
+
+        ReportingSummaryResponse response = boundary.summary(
+                "subject-123",
+                "access-token");
+
+        assertThat(response.userId()).isEqualTo("subject-123");
+        assertThat(response.applicationSummary().applied()).isEqualTo(1);
+        assertThat(response.commitmentProgress().requiredHours())
+                .isEqualByComparingTo("30");
+        server.verify();
     }
 
     private ApplicationRecord record(String status, String jobTitle, String companyName, int day) {

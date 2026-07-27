@@ -13,7 +13,7 @@
 
     <groupId>com.jobseekercopilot</groupId>
     <artifactId>reporting-service</artifactId>
-    <version>1.0.0</version>
+    <version>2.0.0</version>
     <name>Reporting Service</name>
     <description>Owns reporting summaries, timelines, UC journal text, and commitment progress</description>
 
@@ -41,25 +41,6 @@
             <version>${springdoc.version}</version>
         </dependency>
         <dependency>
-            <groupId>com.jobseekercopilot.generated</groupId>
-            <artifactId>application-tracker-service-client</artifactId>
-            <version>1.0.0</version>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/libs/application-tracker-service-client-1.0.0.jar</systemPath>
-        </dependency>
-        <dependency>
-            <groupId>com.jobseekercopilot.generated</groupId>
-            <artifactId>user-profile-service-client</artifactId>
-            <version>1.0.0</version>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/libs/user-profile-service-client-1.0.0.jar</systemPath>
-        </dependency>
-        <dependency>
-            <groupId>org.openapitools</groupId>
-            <artifactId>jackson-databind-nullable</artifactId>
-            <version>0.2.10</version>
-        </dependency>
-        <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
@@ -71,7 +52,6 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
-                <configuration><includeSystemScope>true</includeSystemScope></configuration>
             </plugin>
         </plugins>
     </build>

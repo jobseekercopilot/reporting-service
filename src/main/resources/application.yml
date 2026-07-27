@@ -11,6 +11,11 @@ services:
   user-profile-service:
     base-url: ${USER_PROFILE_SERVICE_URL:http://user-profile-service:8085}
 
+reporting:
+  security:
+    gateway-token: ${REPORTING_GATEWAY_SERVICE_TOKEN:}
+    application-tracker-reader-token: ${APPLICATION_TRACKER_READER_TOKEN:}
+
 management:
   endpoints:
     web:
