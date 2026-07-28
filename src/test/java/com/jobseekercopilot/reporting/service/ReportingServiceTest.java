@@ -95,6 +95,47 @@ class ReportingServiceTest {
     }
 
     @Test
+    void preservesNhsJobsAsReportingAndJournalEvidence() {
+        ApplicationRecord application = new ApplicationRecord(
+                "application-nhs-c123",
+                "nhs-owner",
+                "canonical-nhs-c123",
+                "NHS_JOBS",
+                "C123",
+                "Community Staff Nurse",
+                "Example NHS Trust",
+                "London",
+                null,
+                null,
+                "APPLIED",
+                LocalDateTime.of(2026, 10, 1, 9, 0),
+                LocalDateTime.of(2026, 10, 1, 9, 0),
+                LocalDateTime.of(2026, 10, 1, 9, 0));
+        ApplicationEvent created = new ApplicationEvent(
+                "APPLICATION_CREATED",
+                null,
+                "APPLIED",
+                Instant.parse("2026-10-01T09:00:00Z"));
+
+        List<ActivityTimelineItem> evidence = service.toTimelineItems(
+                application,
+                created,
+                false);
+
+        assertThat(evidence).singleElement().satisfies(item -> {
+            assertThat(item.evidenceCategory()).isEqualTo("JOB_SEARCH");
+            assertThat(item.provider()).isEqualTo("NHS_JOBS");
+            assertThat(item.jobTitle()).isEqualTo("Community Staff Nurse");
+            assertThat(item.text()).isEqualTo(
+                    "Saved Community Staff Nurse at Example NHS Trust "
+                            + "from NHS_JOBS and started tracking it.");
+        });
+        assertThat(service.journalText(evidence)).isEqualTo(
+                "01/10/2026 - Saved Community Staff Nurse at Example NHS Trust "
+                        + "from NHS_JOBS and started tracking it.");
+    }
+
+    @Test
     void doesNotDuplicateDocumentEvidenceWhenAnExplicitDocumentEventExists() {
         ApplicationRecord application = record(
                 "DOCUMENTS_GENERATED", "Developer", "Example Ltd", 1);
