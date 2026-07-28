@@ -128,8 +128,14 @@ public class ReportingService {
 
     List<ActivityTimelineItem> timeline(String owner, List<ApplicationRecord> applications) {
         return applications.stream()
-                .flatMap(application -> historyFor(owner, application).events().stream()
-                        .map(event -> toTimelineItem(application, event)))
+                .flatMap(application -> {
+                    List<ApplicationEvent> events = historyFor(owner, application).events();
+                    boolean hasExplicitDocumentEvent = events.stream()
+                            .map(ApplicationEvent::eventType)
+                            .anyMatch(this::isDocumentEvent);
+                    return events.stream()
+                            .flatMap(event -> toTimelineItems(application, event, hasExplicitDocumentEvent).stream());
+                })
                 .filter(Objects::nonNull)
                 .sorted(Comparator.comparing(ActivityTimelineItem::occurredAt).reversed())
                 .limit(25)
@@ -259,6 +265,33 @@ public class ReportingService {
                 message(status, application.jobTitle(), application.companyName()));
     }
 
+    List<ActivityTimelineItem> toTimelineItems(
+            ApplicationRecord application,
+            ApplicationEvent event,
+            boolean hasExplicitDocumentEvent) {
+        ActivityTimelineItem primary = toTimelineItem(application, event);
+        if (primary == null) {
+            return List.of();
+        }
+        if (!hasExplicitDocumentEvent
+                && "APPLICATION_CREATED".equals(event.eventType())
+                && "DOCUMENTS_GENERATED".equals(primary.status())) {
+            return List.of(
+                    primary,
+                    new ActivityTimelineItem(
+                            application.id(),
+                            primary.occurredAt(),
+                            "DOCUMENTS_GENERATED",
+                            "DOCUMENT",
+                            primary.status(),
+                            application.provider(),
+                            application.jobTitle(),
+                            application.companyName(),
+                            message("DOCUMENTS_GENERATED", application.jobTitle(), application.companyName())));
+        }
+        return List.of(primary);
+    }
+
     private ActivityTimelineItem toTimelineItem(
             ApplicationRecord application,
             ApplicationEvent event) {
@@ -292,6 +325,12 @@ public class ReportingService {
             case "LEGACY_SNAPSHOT" -> "Recorded the existing application state for %s at %s.".formatted(job, company);
             default -> "Updated application evidence for %s at %s.".formatted(job, company);
         };
+    }
+
+    private boolean isDocumentEvent(String eventType) {
+        return "DOCUMENT_REFERENCE_CHANGED".equals(eventType)
+                || "DOCUMENT_REFERENCES_RECONCILED".equals(eventType)
+                || "GENERATED_APPLICATION_WITHDRAWN".equals(eventType);
     }
 
     private String categoryForEvent(String eventType) {

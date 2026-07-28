@@ -12,9 +12,11 @@ import com.jobseekercopilot.reporting.dto.CommitmentProgress;
 import com.jobseekercopilot.reporting.dto.ReportingSummaryResponse;
 import com.jobseekercopilot.reporting.security.ReportingServiceCredentials;
 import com.jobseekercopilot.reporting.service.ReportingService.AspirationsView;
+import com.jobseekercopilot.reporting.service.ReportingService.ApplicationEvent;
 import com.jobseekercopilot.reporting.service.ReportingService.ApplicationRecord;
 import com.jobseekercopilot.reporting.service.ReportingService.UserProfileView;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -66,6 +68,50 @@ class ReportingServiceTest {
         assertThat(timeline).hasSize(10);
         assertThat(timeline.get(0).text()).isEqualTo("Applied for Role 12 at Company 12.");
         assertThat(timeline.get(9).text()).isEqualTo("Applied for Role 3 at Company 3.");
+    }
+
+    @Test
+    void preservesJobSearchAndDocumentEvidenceWhenCreationContainsGeneratedDocuments() {
+        ApplicationRecord application = record(
+                "DOCUMENTS_GENERATED", "Developer", "Example Ltd", 1);
+        ApplicationEvent created = new ApplicationEvent(
+                "APPLICATION_CREATED", null, "DOCUMENTS_GENERATED",
+                Instant.parse("2026-10-01T09:00:00Z"));
+
+        List<ActivityTimelineItem> evidence = service.toTimelineItems(
+                application, created, false);
+
+        assertThat(evidence)
+                .extracting(ActivityTimelineItem::evidenceCategory)
+                .containsExactly("JOB_SEARCH", "DOCUMENT");
+        assertThat(evidence)
+                .extracting(ActivityTimelineItem::eventType)
+                .containsExactly("APPLICATION_CREATED", "DOCUMENTS_GENERATED");
+        assertThat(evidence)
+                .extracting(ActivityTimelineItem::text)
+                .containsExactly(
+                        "Saved Developer at Example Ltd from test and started tracking it.",
+                        "Generated CV and cover letter for Developer at Example Ltd.");
+    }
+
+    @Test
+    void doesNotDuplicateDocumentEvidenceWhenAnExplicitDocumentEventExists() {
+        ApplicationRecord application = record(
+                "DOCUMENTS_GENERATED", "Developer", "Example Ltd", 1);
+        ApplicationEvent created = new ApplicationEvent(
+                "APPLICATION_CREATED", null, "DOCUMENTS_GENERATED",
+                Instant.parse("2026-10-01T09:00:00Z"));
+        ApplicationEvent documentChanged = new ApplicationEvent(
+                "DOCUMENT_REFERENCE_CHANGED", "DOCUMENTS_GENERATED", "DOCUMENTS_GENERATED",
+                Instant.parse("2026-10-01T09:01:00Z"));
+
+        List<ActivityTimelineItem> evidence = java.util.stream.Stream.of(created, documentChanged)
+                .flatMap(event -> service.toTimelineItems(application, event, true).stream())
+                .toList();
+
+        assertThat(evidence)
+                .extracting(ActivityTimelineItem::evidenceCategory)
+                .containsExactly("JOB_SEARCH", "DOCUMENT");
     }
 
     @Test
