@@ -100,8 +100,15 @@ class ReportingServiceTest {
                 "application-nhs-c123",
                 "nhs-owner",
                 "canonical-nhs-c123",
+                "canonical-nhs-c123",
                 "NHS_JOBS",
                 "C123",
+                "https://www.jobs.nhs.uk/candidate/jobadvert/C123",
+                "https://www.jobs.nhs.uk/candidate/jobadvert/C123",
+                "Vacancy source: NHS Jobs",
+                "https://www.jobs.nhs.uk/",
+                "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/",
+                "NHS Jobs does not endorse Job Seeker Copilot.",
                 "Community Staff Nurse",
                 "Example NHS Trust",
                 "London",
@@ -126,13 +133,20 @@ class ReportingServiceTest {
             assertThat(item.evidenceCategory()).isEqualTo("JOB_SEARCH");
             assertThat(item.provider()).isEqualTo("NHS_JOBS");
             assertThat(item.jobTitle()).isEqualTo("Community Staff Nurse");
-            assertThat(item.text()).isEqualTo(
-                    "Saved Community Staff Nurse at Example NHS Trust "
-                            + "from NHS_JOBS and started tracking it.");
+            assertThat(item.text())
+                    .startsWith("Saved Community Staff Nurse at Example NHS Trust from NHS_JOBS")
+                    .contains("externalVacancyReference=C123")
+                    .contains("canonicalJobId=canonical-nhs-c123")
+                    .contains("listingUrl=https://www.jobs.nhs.uk/candidate/jobadvert/C123")
+                    .contains("applicationUrl=https://www.jobs.nhs.uk/candidate/jobadvert/C123")
+                    .contains("attribution=Vacancy source: NHS Jobs")
+                    .contains("attributionSourceUrl=https://www.jobs.nhs.uk/")
+                    .contains("licenceUrl=https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/")
+                    .contains("noEndorsement=NHS Jobs does not endorse Job Seeker Copilot.");
         });
-        assertThat(service.journalText(evidence)).isEqualTo(
-                "01/10/2026 - Saved Community Staff Nurse at Example NHS Trust "
-                        + "from NHS_JOBS and started tracking it.");
+        assertThat(service.journalText(evidence))
+                .contains("01/10/2026 - Saved Community Staff Nurse")
+                .contains("listingUrl=https://www.jobs.nhs.uk/candidate/jobadvert/C123");
     }
 
     @Test
@@ -274,8 +288,15 @@ class ReportingServiceTest {
         return new ApplicationRecord(
                 null,
                 "user-1",
+                null,
                 "job-" + day,
                 "test",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
                 null,
                 jobTitle,
                 companyName,
