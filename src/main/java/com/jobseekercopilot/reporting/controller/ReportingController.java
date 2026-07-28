@@ -9,6 +9,8 @@ import io.swagger.v3.oas.annotations.enums.ParameterIn;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import org.springframework.http.CacheControl;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -55,6 +57,25 @@ public class ReportingController {
         return privateResponse(reportingService.ucJournal(
                 owner,
                 bearerToken(authorization)));
+    }
+
+    @GetMapping(value = "/evidence.txt", produces = MediaType.TEXT_PLAIN_VALUE)
+    @Operation(summary = "Download deterministic work-search evidence as plain text")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Owner-scoped evidence export returned"),
+            @ApiResponse(responseCode = "401", description = "Authorized Gateway required"),
+            @ApiResponse(responseCode = "502", description = "Downstream service failed")
+    })
+    public ResponseEntity<String> evidenceExport(
+            @Parameter(in = ParameterIn.HEADER, name = OWNER_HEADER, required = true)
+            @RequestHeader(OWNER_HEADER) String owner,
+            @RequestHeader("Authorization") String authorization) {
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .header("X-Content-Type-Options", "nosniff")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=job-search-evidence.txt")
+                .contentType(MediaType.TEXT_PLAIN)
+                .body(reportingService.evidenceExport(owner, bearerToken(authorization)));
     }
 
     private String bearerToken(String authorization) {

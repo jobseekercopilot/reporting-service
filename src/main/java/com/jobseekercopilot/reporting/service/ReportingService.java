@@ -11,6 +11,8 @@ import java.math.RoundingMode;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
 import java.util.List;
@@ -58,7 +60,7 @@ public class ReportingService {
         validateOwner(owner);
         List<ApplicationRecord> applications = applicationsFor(owner);
         UserProfileView profile = profileFor(accessToken);
-        List<ActivityTimelineItem> timeline = timeline(applications);
+        List<ActivityTimelineItem> timeline = timeline(owner, applications);
         log.info("Reporting summary generation completed applicationCount={} timelineCount={} durationMs={}",
                 applications.size(),
                 timeline.size(),
@@ -74,11 +76,33 @@ public class ReportingService {
     public UcJournalResponse ucJournal(String owner, String accessToken) {
         long startedAt = System.nanoTime();
         validateOwner(owner);
-        List<ActivityTimelineItem> timeline = timeline(applicationsFor(owner));
+        List<ApplicationRecord> applications = applicationsFor(owner);
+        List<ActivityTimelineItem> timeline = timeline(owner, applications);
         log.info("UC journal generation completed timelineCount={} durationMs={}",
                 timeline.size(),
                 (System.nanoTime() - startedAt) / 1_000_000);
         return new UcJournalResponse(owner, journalText(timeline));
+    }
+
+    public String evidenceExport(String owner, String accessToken) {
+        ReportingSummaryResponse report = summary(owner, accessToken);
+        StringBuilder evidence = new StringBuilder();
+        evidence.append("Job Seeker Copilot work-search evidence\n")
+                .append("Generated: ")
+                .append(LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
+                .append("\n\n")
+                .append("Application summary\n")
+                .append("Tracked: ").append(report.applicationSummary().total()).append("\n")
+                .append("Applied: ").append(report.applicationSummary().applied()).append("\n")
+                .append("Interviews: ").append(report.applicationSummary().interview()).append("\n")
+                .append("Offers: ").append(report.applicationSummary().offer()).append("\n\n")
+                .append("Persisted activity evidence\n");
+        String journal = report.ucJournalPreview();
+        evidence.append(journal == null || journal.isBlank()
+                ? "No recorded activity.\n"
+                : journal + "\n");
+        evidence.append("\nNote: This export is a user aid assembled from persisted Job Seeker Copilot records. Review it before sharing; it is not an official Universal Credit submission or measured time log.\n");
+        return evidence.toString();
     }
 
     ApplicationSummary applicationSummary(List<ApplicationRecord> applications) {
@@ -99,6 +123,16 @@ public class ReportingService {
                 .filter(Objects::nonNull)
                 .sorted(Comparator.comparing(ActivityTimelineItem::occurredAt).reversed())
                 .limit(10)
+                .toList();
+    }
+
+    List<ActivityTimelineItem> timeline(String owner, List<ApplicationRecord> applications) {
+        return applications.stream()
+                .flatMap(application -> historyFor(owner, application).events().stream()
+                        .map(event -> toTimelineItem(application, event)))
+                .filter(Objects::nonNull)
+                .sorted(Comparator.comparing(ActivityTimelineItem::occurredAt).reversed())
+                .limit(25)
                 .toList();
     }
 
@@ -154,6 +188,21 @@ public class ReportingService {
         return safeApplications;
     }
 
+    private ApplicationHistory historyFor(String owner, ApplicationRecord application) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("X-Service-Token", credentials.applicationTrackerReaderToken());
+        headers.set("X-Application-Owner", owner);
+        ApplicationHistory history = restTemplate.exchange(
+                applicationTrackerBaseUrl + "/api/v1/applications/{applicationId}/history?size=100",
+                HttpMethod.GET,
+                new HttpEntity<>(headers),
+                ApplicationHistory.class,
+                application.id()).getBody();
+        return history == null || history.events() == null
+                ? new ApplicationHistory(application.id(), List.of())
+                : history;
+    }
+
     private UserProfileView profileFor(String accessToken) {
         long startedAt = System.nanoTime();
         HttpHeaders headers = new HttpHeaders();
@@ -199,11 +248,62 @@ public class ReportingService {
         }
         String status = statusName(application);
         return new ActivityTimelineItem(
+                application.id(),
                 occurredAt,
+                "CURRENT_STATUS",
+                categoryForStatus(status),
                 status,
+                application.provider(),
                 application.jobTitle(),
                 application.companyName(),
                 message(status, application.jobTitle(), application.companyName()));
+    }
+
+    private ActivityTimelineItem toTimelineItem(
+            ApplicationRecord application,
+            ApplicationEvent event) {
+        if (event.occurredAt() == null || event.eventType() == null) {
+            return null;
+        }
+        String status = blankToFallback(event.toStatus(), statusName(application));
+        return new ActivityTimelineItem(
+                application.id(),
+                LocalDateTime.ofInstant(event.occurredAt(), ZoneOffset.UTC),
+                event.eventType(),
+                categoryForEvent(event.eventType()),
+                status,
+                application.provider(),
+                application.jobTitle(),
+                application.companyName(),
+                eventMessage(event.eventType(), status, application));
+    }
+
+    private String eventMessage(String eventType, String status, ApplicationRecord application) {
+        String job = blankToFallback(application.jobTitle(), "role");
+        String company = blankToFallback(application.companyName(), "the employer");
+        return switch (eventType) {
+            case "APPLICATION_CREATED" -> "Saved %s at %s from %s and started tracking it."
+                    .formatted(job, company, blankToFallback(application.provider(), "job search"));
+            case "STATUS_CHANGED" -> message(status, application.jobTitle(), application.companyName());
+            case "DOCUMENT_REFERENCE_CHANGED" -> "Generated or linked application documents for %s at %s.".formatted(job, company);
+            case "DOCUMENT_REFERENCES_RECONCILED" -> "Verified stored application documents for %s at %s.".formatted(job, company);
+            case "GENERATED_APPLICATION_WITHDRAWN" -> "Withdrew generated application materials for %s at %s.".formatted(job, company);
+            case "APPLICATION_DELETED" -> "Removed the tracked application for %s at %s.".formatted(job, company);
+            case "LEGACY_SNAPSHOT" -> "Recorded the existing application state for %s at %s.".formatted(job, company);
+            default -> "Updated application evidence for %s at %s.".formatted(job, company);
+        };
+    }
+
+    private String categoryForEvent(String eventType) {
+        return switch (eventType) {
+            case "APPLICATION_CREATED" -> "JOB_SEARCH";
+            case "DOCUMENT_REFERENCE_CHANGED", "DOCUMENT_REFERENCES_RECONCILED", "GENERATED_APPLICATION_WITHDRAWN" -> "DOCUMENT";
+            default -> "APPLICATION";
+        };
+    }
+
+    private String categoryForStatus(String status) {
+        return "DOCUMENTS_GENERATED".equals(status) ? "DOCUMENT" : "APPLICATION";
     }
 
     private String message(String status, String jobTitle, String companyName) {
@@ -249,6 +349,16 @@ public class ReportingService {
             LocalDateTime createdAt,
             LocalDateTime updatedAt,
             LocalDateTime appliedAt) {
+    }
+
+    record ApplicationHistory(String applicationId, List<ApplicationEvent> events) {
+    }
+
+    record ApplicationEvent(
+            String eventType,
+            String fromStatus,
+            String toStatus,
+            Instant occurredAt) {
     }
 
     record UserProfileView(AspirationsView aspirations) {
