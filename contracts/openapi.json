@@ -45,8 +45,8 @@
               }
             }
           },
-          "502" : {
-            "description" : "Downstream service failed",
+          "401" : {
+            "description" : "Authorized Gateway required",
             "content" : {
               "*/*" : {
                 "schema" : {
@@ -55,8 +55,8 @@
               }
             }
           },
-          "401" : {
-            "description" : "Authorized Gateway required",
+          "502" : {
+            "description" : "Downstream service failed",
             "content" : {
               "*/*" : {
                 "schema" : {
@@ -99,6 +99,16 @@
               }
             }
           },
+          "401" : {
+            "description" : "Authorized Gateway required",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ReportingSummaryResponse"
+                }
+              }
+            }
+          },
           "502" : {
             "description" : "Downstream service failed",
             "content" : {
@@ -108,13 +118,57 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/reports/evidence.txt" : {
+      "get" : {
+        "tags" : [ "reporting-controller" ],
+        "summary" : "Download deterministic work-search evidence as plain text",
+        "operationId" : "evidenceExport",
+        "parameters" : [ {
+          "name" : "X-Report-Owner",
+          "in" : "header",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "name" : "Authorization",
+          "in" : "header",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Owner-scoped evidence export returned",
+            "content" : {
+              "text/plain" : {
+                "schema" : {
+                  "type" : "string"
+                }
+              }
+            }
           },
           "401" : {
             "description" : "Authorized Gateway required",
             "content" : {
-              "*/*" : {
+              "text/plain" : {
                 "schema" : {
-                  "$ref" : "#/components/schemas/ReportingSummaryResponse"
+                  "type" : "string"
+                }
+              }
+            }
+          },
+          "502" : {
+            "description" : "Downstream service failed",
+            "content" : {
+              "text/plain" : {
+                "schema" : {
+                  "type" : "string"
                 }
               }
             }
@@ -139,11 +193,23 @@
       "ActivityTimelineItem" : {
         "type" : "object",
         "properties" : {
+          "applicationId" : {
+            "type" : "string"
+          },
           "occurredAt" : {
             "type" : "string",
             "format" : "date-time"
           },
+          "eventType" : {
+            "type" : "string"
+          },
+          "evidenceCategory" : {
+            "type" : "string"
+          },
           "status" : {
+            "type" : "string"
+          },
+          "provider" : {
             "type" : "string"
           },
           "jobTitle" : {
