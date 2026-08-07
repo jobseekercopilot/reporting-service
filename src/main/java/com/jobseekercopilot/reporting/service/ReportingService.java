@@ -14,10 +14,14 @@ import java.time.LocalDateTime;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -39,6 +43,7 @@ public class ReportingService {
     private final RestTemplate restTemplate;
     private final ReportingServiceCredentials credentials;
     private final String applicationTrackerBaseUrl;
+    private final String documentStoreBaseUrl;
     private final String userProfileBaseUrl;
 
     public ReportingService(
@@ -46,11 +51,14 @@ public class ReportingService {
             ReportingServiceCredentials credentials,
             @Value("${services.application-tracker-service.base-url:http://application-tracker-service:8088}")
             String applicationTrackerBaseUrl,
+            @Value("${services.document-store-service.base-url:http://document-store-service:8089}")
+            String documentStoreBaseUrl,
             @Value("${services.user-profile-service.base-url:http://user-profile-service:8085}")
             String userProfileBaseUrl) {
         this.restTemplate = restTemplate;
         this.credentials = credentials;
         this.applicationTrackerBaseUrl = applicationTrackerBaseUrl;
+        this.documentStoreBaseUrl = documentStoreBaseUrl;
         this.userProfileBaseUrl = userProfileBaseUrl;
     }
 
@@ -127,19 +135,30 @@ public class ReportingService {
     }
 
     List<ActivityTimelineItem> timeline(String owner, List<ApplicationRecord> applications) {
-        return applications.stream()
+        var applicationActivity = applications.stream()
                 .flatMap(application -> {
-                    List<ApplicationEvent> events = historyFor(owner, application).events();
+                    List<ApplicationEvent> events = historyFor(owner, application);
                     boolean hasExplicitDocumentEvent = events.stream()
                             .map(ApplicationEvent::eventType)
                             .anyMatch(this::isDocumentEvent);
                     return events.stream()
                             .flatMap(event -> toTimelineItems(application, event, hasExplicitDocumentEvent).stream());
-                })
+                }).toList();
+        return java.util.stream.Stream.concat(
+                        applicationActivity.stream(),
+                        documentActivityFor(owner).stream())
                 .filter(Objects::nonNull)
-                .sorted(Comparator.comparing(ActivityTimelineItem::occurredAt).reversed())
+                .sorted(activityOrder())
                 .limit(25)
                 .toList();
+    }
+
+    private Comparator<ActivityTimelineItem> activityOrder() {
+        return Comparator.comparing(ActivityTimelineItem::occurredAt)
+                .reversed()
+                .thenComparing(ActivityTimelineItem::eventType)
+                .thenComparing(item -> blankToFallback(item.applicationId(), ""))
+                .thenComparing(ActivityTimelineItem::text);
     }
 
     String journalText(List<ActivityTimelineItem> timeline) {
@@ -194,19 +213,72 @@ public class ReportingService {
         return safeApplications;
     }
 
-    private ApplicationHistory historyFor(String owner, ApplicationRecord application) {
+    private List<ApplicationEvent> historyFor(
+            String owner, ApplicationRecord application) {
         HttpHeaders headers = new HttpHeaders();
         headers.set("X-Service-Token", credentials.applicationTrackerReaderToken());
         headers.set("X-Application-Owner", owner);
-        ApplicationHistory history = restTemplate.exchange(
-                applicationTrackerBaseUrl + "/api/v1/applications/{applicationId}/history?size=100",
-                HttpMethod.GET,
-                new HttpEntity<>(headers),
-                ApplicationHistory.class,
-                application.id()).getBody();
-        return history == null || history.events() == null
-                ? new ApplicationHistory(application.id(), List.of())
-                : history;
+        List<ApplicationEvent> events = new ArrayList<>();
+        int page = 0;
+        int totalPages;
+        do {
+            ApplicationHistory history = restTemplate.exchange(
+                    applicationTrackerBaseUrl
+                            + "/api/v1/applications/{applicationId}/history?page={page}&size=100",
+                    HttpMethod.GET,
+                    new HttpEntity<>(headers),
+                    ApplicationHistory.class,
+                    application.id(),
+                    page).getBody();
+            if (history == null) {
+                break;
+            }
+            if (history.events() != null) {
+                events.addAll(history.events());
+            }
+            totalPages = Math.max(history.totalPages(), 1);
+            page++;
+        } while (page < totalPages && page < 1000);
+        return events;
+    }
+
+    private List<ActivityTimelineItem> documentActivityFor(String owner) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("X-Service-Token", credentials.documentStoreReaderToken());
+        headers.set("X-Document-Owner", owner);
+        List<ActivityTimelineItem> items = new ArrayList<>();
+        Set<UUID> seenEventIds = new HashSet<>();
+        int page = 0;
+        int totalPages;
+        try {
+            do {
+                DocumentActivityPage activity = restTemplate.exchange(
+                        documentStoreBaseUrl
+                                + "/api/v1/document-activity?page={page}&size=100",
+                        HttpMethod.GET,
+                        new HttpEntity<>(headers),
+                        DocumentActivityPage.class,
+                        page).getBody();
+                if (activity == null) {
+                    break;
+                }
+                if (activity.items() != null) {
+                    activity.items().stream()
+                            .filter(event -> event.id() != null
+                                    && seenEventIds.add(event.id()))
+                            .map(this::toTimelineItem)
+                            .filter(Objects::nonNull)
+                            .forEach(items::add);
+                }
+                totalPages = Math.max(activity.totalPages(), 1);
+                page++;
+            } while (page < totalPages && page < 1000);
+        } catch (RestClientException exception) {
+            log.warn(
+                    "Document Store reporting lookup failed error={}",
+                    exception.getClass().getSimpleName());
+        }
+        return items;
     }
 
     private UserProfileView profileFor(String accessToken) {
@@ -311,6 +383,51 @@ public class ReportingService {
                 eventMessage(event.eventType(), status, application));
     }
 
+    private ActivityTimelineItem toTimelineItem(DocumentActivityEvent event) {
+        if (event.occurredAt() == null
+                || event.eventType() == null
+                || event.documentType() == null
+                || event.version() < 1) {
+            return null;
+        }
+        String document = documentLabel(event.documentType());
+        String text = switch (event.eventType()) {
+            case "DOCUMENT_VERSION_CREATED" ->
+                    "Created %s version %d.".formatted(document, event.version());
+            case "DOCUMENT_VERSION_DOWNLOADED" ->
+                    "Downloaded %s %s version %d."
+                            .formatted(
+                                    "PREVIOUS_VERSION".equals(event.result())
+                                            ? "previous"
+                                            : "current",
+                                    document,
+                                    event.version());
+            case "DOCUMENT_CURRENT_VERSION_CHANGED" ->
+                    "Made %s version %d current."
+                            .formatted(document, event.version());
+            case "DOCUMENT_VERSION_ARCHIVED" ->
+                    "Archived %s version %d."
+                            .formatted(document, event.version());
+            case "DOCUMENT_VERSION_RESTORED" ->
+                    "Restored %s version %d."
+                            .formatted(document, event.version());
+            default -> null;
+        };
+        if (text == null) {
+            return null;
+        }
+        return new ActivityTimelineItem(
+                null,
+                LocalDateTime.ofInstant(event.occurredAt(), ZoneOffset.UTC),
+                event.eventType(),
+                "DOCUMENT",
+                blankToFallback(event.result(), "RECORDED"),
+                "DOCUMENT_STORE",
+                null,
+                null,
+                text);
+    }
+
     private String eventMessage(String eventType, String status, ApplicationRecord application) {
         String job = blankToFallback(application.jobTitle(), "role");
         String company = blankToFallback(application.companyName(), "the employer");
@@ -320,6 +437,9 @@ public class ReportingService {
             case "STATUS_CHANGED" -> message(status, application.jobTitle(), application.companyName());
             case "DOCUMENT_REFERENCE_CHANGED" -> "Generated or linked application documents for %s at %s.".formatted(job, company);
             case "DOCUMENT_REFERENCES_RECONCILED" -> "Verified stored application documents for %s at %s.".formatted(job, company);
+            case "APPLICATION_DOCUMENT_SELECTED" -> "Saved application document choices for %s at %s.".formatted(job, company);
+            case "APPLICATION_DOCUMENT_SELECTION_CHANGED" -> "Changed application document choices for %s at %s.".formatted(job, company);
+            case "APPLICATION_DOCUMENTS_FROZEN" -> "Froze the exact application document choices when applying for %s at %s.".formatted(job, company);
             case "GENERATED_APPLICATION_WITHDRAWN" -> "Withdrew generated application materials for %s at %s.".formatted(job, company);
             case "APPLICATION_DELETED" -> "Removed the tracked application for %s at %s.".formatted(job, company);
             case "LEGACY_SNAPSHOT" -> "Recorded the existing application state for %s at %s.".formatted(job, company);
@@ -330,13 +450,21 @@ public class ReportingService {
     private boolean isDocumentEvent(String eventType) {
         return "DOCUMENT_REFERENCE_CHANGED".equals(eventType)
                 || "DOCUMENT_REFERENCES_RECONCILED".equals(eventType)
+                || "APPLICATION_DOCUMENT_SELECTED".equals(eventType)
+                || "APPLICATION_DOCUMENT_SELECTION_CHANGED".equals(eventType)
+                || "APPLICATION_DOCUMENTS_FROZEN".equals(eventType)
                 || "GENERATED_APPLICATION_WITHDRAWN".equals(eventType);
     }
 
     private String categoryForEvent(String eventType) {
         return switch (eventType) {
             case "APPLICATION_CREATED" -> "JOB_SEARCH";
-            case "DOCUMENT_REFERENCE_CHANGED", "DOCUMENT_REFERENCES_RECONCILED", "GENERATED_APPLICATION_WITHDRAWN" -> "DOCUMENT";
+            case "DOCUMENT_REFERENCE_CHANGED",
+                    "DOCUMENT_REFERENCES_RECONCILED",
+                    "APPLICATION_DOCUMENT_SELECTED",
+                    "APPLICATION_DOCUMENT_SELECTION_CHANGED",
+                    "APPLICATION_DOCUMENTS_FROZEN",
+                    "GENERATED_APPLICATION_WITHDRAWN" -> "DOCUMENT";
             default -> "APPLICATION";
         };
     }
@@ -357,6 +485,14 @@ public class ReportingService {
             case "ACCEPTED" -> "Accepted offer for %s at %s.".formatted(job, company);
             case "REJECTED_BY_USER" -> "Declined offer for %s at %s.".formatted(job, company);
             default -> "Updated application for %s at %s.".formatted(job, company);
+        };
+    }
+
+    private String documentLabel(String documentType) {
+        return switch (documentType) {
+            case "CV" -> "CV";
+            case "COVER_LETTER" -> "cover letter";
+            default -> "document";
         };
     }
 
@@ -390,13 +526,33 @@ public class ReportingService {
             LocalDateTime appliedAt) {
     }
 
-    record ApplicationHistory(String applicationId, List<ApplicationEvent> events) {
+    record ApplicationHistory(
+            String applicationId,
+            List<ApplicationEvent> events,
+            int page,
+            int totalPages) {
     }
 
     record ApplicationEvent(
             String eventType,
             String fromStatus,
             String toStatus,
+            Instant occurredAt) {
+    }
+
+    record DocumentActivityPage(
+            List<DocumentActivityEvent> items,
+            int page,
+            int totalPages) {
+    }
+
+    record DocumentActivityEvent(
+            UUID id,
+            String eventType,
+            String documentType,
+            String source,
+            int version,
+            String result,
             Instant occurredAt) {
     }
 
