@@ -30,10 +30,14 @@ class ReportingServiceTest {
             "test-only-reporting-gateway-token-32-bytes";
     private static final String READER_TOKEN =
             "test-only-application-reader-token-32-bytes";
+    private static final String STORE_READER_TOKEN =
+            "test-only-document-store-reader-token-32-bytes";
     private final ReportingService service = new ReportingService(
             null,
-            new ReportingServiceCredentials(GATEWAY_TOKEN, READER_TOKEN),
+            new ReportingServiceCredentials(
+                    GATEWAY_TOKEN, READER_TOKEN, STORE_READER_TOKEN),
             "http://application-tracker-service:8088",
+            "http://document-store-service:8089",
             "http://user-profile-service:8085");
 
     @Test
@@ -170,7 +174,7 @@ class ReportingServiceTest {
                         }]
                         """,
                         MediaType.APPLICATION_JSON));
-        server.expect(requestTo("http://application-tracker-service:8088/api/v1/applications/application-1/history?size=100"))
+        server.expect(requestTo("http://application-tracker-service:8088/api/v1/applications/application-1/history?page=0&size=100"))
                 .andExpect(method(HttpMethod.GET))
                 .andExpect(header("X-Service-Token", READER_TOKEN))
                 .andExpect(header("X-Application-Owner", "subject-123"))
@@ -191,8 +195,19 @@ class ReportingServiceTest {
                             "fromStatus": "DOCUMENTS_GENERATED",
                             "toStatus": "APPLIED",
                             "occurredAt": "2026-10-01T11:00:00Z"
-                          }]
+                          }],
+                          "page": 0,
+                          "totalPages": 1
                         }
+                        """,
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo("http://document-store-service:8089/api/v1/document-activity?page=0&size=100"))
+                .andExpect(method(HttpMethod.GET))
+                .andExpect(header("X-Service-Token", STORE_READER_TOKEN))
+                .andExpect(header("X-Document-Owner", "subject-123"))
+                .andRespond(withSuccess(
+                        """
+                        {"items":[],"page":0,"totalPages":0}
                         """,
                         MediaType.APPLICATION_JSON));
         server.expect(requestTo("http://user-profile-service:8085/api/profiles/me"))
@@ -205,8 +220,10 @@ class ReportingServiceTest {
                         MediaType.APPLICATION_JSON));
         ReportingService boundary = new ReportingService(
                 restTemplate,
-                new ReportingServiceCredentials(GATEWAY_TOKEN, READER_TOKEN),
+                new ReportingServiceCredentials(
+                        GATEWAY_TOKEN, READER_TOKEN, STORE_READER_TOKEN),
                 "http://application-tracker-service:8088",
+                "http://document-store-service:8089",
                 "http://user-profile-service:8085");
 
         ReportingSummaryResponse response = boundary.summary(
@@ -226,6 +243,107 @@ class ReportingServiceTest {
                         "Applied for Developer at Example Ltd.",
                         "Generated or linked application documents for Developer at Example Ltd.",
                         "Saved Developer at Example Ltd from test and started tracking it.");
+        server.verify();
+    }
+
+    @Test
+    void mergesAllEightContentFreeActivitiesWithStablePagingAndReplayDeduplication() {
+        RestTemplate restTemplate = new RestTemplate();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(restTemplate)
+                .ignoreExpectOrder(true)
+                .build();
+        server.expect(requestTo(
+                        "http://application-tracker-service:8088"
+                                + "/api/v1/applications/user/activity-owner"))
+                .andExpect(header("X-Service-Token", READER_TOKEN))
+                .andExpect(header("X-Application-Owner", "activity-owner"))
+                .andRespond(withSuccess(
+                        """
+                        [{
+                          "id":"application-1",
+                          "userId":"activity-owner",
+                          "provider":"test",
+                          "jobTitle":"Developer",
+                          "companyName":"Example Ltd",
+                          "status":"SAVED",
+                          "createdAt":"2026-10-01T08:00:00",
+                          "updatedAt":"2026-10-01T08:00:00"
+                        }]
+                        """,
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(
+                        "http://application-tracker-service:8088/api/v1/applications/application-1/history?page=0&size=100"))
+                .andExpect(header("X-Service-Token", READER_TOKEN))
+                .andExpect(header("X-Application-Owner", "activity-owner"))
+                .andRespond(withSuccess(
+                        """
+                        {"events":[
+                          {"eventType":"APPLICATION_DOCUMENT_SELECTED","toStatus":"SAVED","occurredAt":"2026-10-01T13:00:00Z","reason":"content must not pass through"},
+                          {"eventType":"APPLICATION_DOCUMENT_SELECTION_CHANGED","toStatus":"SAVED","occurredAt":"2026-10-01T14:00:00Z"}
+                        ],"page":0,"totalPages":2}
+                        """,
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(
+                        "http://application-tracker-service:8088/api/v1/applications/application-1/history?page=1&size=100"))
+                .andRespond(withSuccess(
+                        """
+                        {"events":[
+                          {"eventType":"APPLICATION_DOCUMENTS_FROZEN","toStatus":"APPLIED","occurredAt":"2026-10-01T15:00:00Z"}
+                        ],"page":1,"totalPages":2}
+                        """,
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(
+                        "http://document-store-service:8089/api/v1/document-activity?page=0&size=100"))
+                .andExpect(header("X-Service-Token", STORE_READER_TOKEN))
+                .andExpect(header("X-Document-Owner", "activity-owner"))
+                .andRespond(withSuccess(
+                        """
+                        {"items":[
+                          {"id":"11111111-1111-4111-8111-111111111111","eventType":"DOCUMENT_VERSION_CREATED","documentType":"CV","version":2,"result":"CREATED","occurredAt":"2026-10-01T08:00:00Z","content":"TOP-SECRET"},
+                          {"id":"22222222-2222-4222-8222-222222222222","eventType":"DOCUMENT_VERSION_DOWNLOADED","documentType":"CV","version":2,"result":"PREVIOUS_VERSION","occurredAt":"2026-10-01T09:00:00Z","fileName":"private.docx"},
+                          {"id":"33333333-3333-4333-8333-333333333333","eventType":"DOCUMENT_CURRENT_VERSION_CHANGED","documentType":"CV","version":2,"result":"CURRENT_CHANGED","occurredAt":"2026-10-01T10:00:00Z","contentSha256":"forbidden-hash"}
+                        ],"page":0,"totalPages":2}
+                        """,
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(
+                        "http://document-store-service:8089/api/v1/document-activity?page=1&size=100"))
+                .andRespond(withSuccess(
+                        """
+                        {"items":[
+                          {"id":"33333333-3333-4333-8333-333333333333","eventType":"DOCUMENT_CURRENT_VERSION_CHANGED","documentType":"CV","version":2,"result":"CURRENT_CHANGED","occurredAt":"2026-10-01T10:00:00Z"},
+                          {"id":"44444444-4444-4444-8444-444444444444","eventType":"DOCUMENT_VERSION_ARCHIVED","documentType":"COVER_LETTER","version":3,"result":"ARCHIVED","occurredAt":"2026-10-01T11:00:00Z","scannerDetails":"forbidden"},
+                          {"id":"55555555-5555-4555-8555-555555555555","eventType":"DOCUMENT_VERSION_RESTORED","documentType":"COVER_LETTER","version":3,"result":"RESTORED","occurredAt":"2026-10-01T12:00:00Z","notes":"forbidden"}
+                        ],"page":1,"totalPages":2}
+                        """,
+                        MediaType.APPLICATION_JSON));
+
+        ReportingService boundary = new ReportingService(
+                restTemplate,
+                new ReportingServiceCredentials(
+                        GATEWAY_TOKEN, READER_TOKEN, STORE_READER_TOKEN),
+                "http://application-tracker-service:8088",
+                "http://document-store-service:8089",
+                "http://user-profile-service:8085");
+
+        String journal = boundary.ucJournal(
+                "activity-owner", "unused").journalText();
+
+        assertThat(journal.lines()).containsExactly(
+                "01/10/2026 - Froze the exact application document choices when applying for Developer at Example Ltd.",
+                "01/10/2026 - Changed application document choices for Developer at Example Ltd.",
+                "01/10/2026 - Saved application document choices for Developer at Example Ltd.",
+                "01/10/2026 - Restored cover letter version 3.",
+                "01/10/2026 - Archived cover letter version 3.",
+                "01/10/2026 - Made CV version 2 current.",
+                "01/10/2026 - Downloaded previous CV version 2.",
+                "01/10/2026 - Created CV version 2.");
+        assertThat(journal)
+                .doesNotContain("TOP-SECRET")
+                .doesNotContain("private.docx")
+                .doesNotContain("forbidden-hash")
+                .doesNotContain("scannerDetails")
+                .doesNotContain("notes")
+                .doesNotContain("content must not pass through");
         server.verify();
     }
 
