@@ -17,6 +17,8 @@ class ReportingNhsEvidenceExportTest {
 
     private static final String READER_TOKEN =
             "test-only-application-reader-token-32-bytes";
+    private static final String STORE_READER_TOKEN =
+            "test-only-document-store-reader-token-32-bytes";
 
     @Test
     void authoritativeNhsSourceSurvivesTrackerReloadIntoEvidenceExport() {
@@ -27,8 +29,10 @@ class ReportingNhsEvidenceExportTest {
                 restTemplate,
                 new ReportingServiceCredentials(
                         "test-only-reporting-gateway-token-32-bytes",
-                        READER_TOKEN),
+                        READER_TOKEN,
+                        STORE_READER_TOKEN),
                 "http://application-tracker-service:8088",
+                "http://document-store-service:8089",
                 "http://user-profile-service:8085");
 
         server.expect(requestTo(
@@ -40,7 +44,7 @@ class ReportingNhsEvidenceExportTest {
                 .andRespond(withSuccess(
                         """
                         [{
-                          "id": "application-nhs-c123",
+                          "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
                           "userId": "nhs-owner",
                           "jobId": "canonical-nhs-c123",
                           "canonicalJobId": "canonical-nhs-c123",
@@ -64,21 +68,32 @@ class ReportingNhsEvidenceExportTest {
                         MediaType.APPLICATION_JSON));
         server.expect(requestTo(
                         "http://application-tracker-service:8088"
-                                + "/api/v1/applications/application-nhs-c123/history?size=100"))
+                                + "/api/v1/applications/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/history?page=0&size=100"))
                 .andExpect(method(HttpMethod.GET))
                 .andExpect(header("X-Service-Token", READER_TOKEN))
                 .andExpect(header("X-Application-Owner", "nhs-owner"))
                 .andRespond(withSuccess(
                         """
                         {
-                          "applicationId": "application-nhs-c123",
+                          "applicationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
                           "events": [{
+                            "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                            "applicationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
                             "eventType": "APPLICATION_CREATED",
                             "toStatus": "APPLIED",
                             "occurredAt": "2026-10-01T09:00:00Z"
                           }]
                         }
                         """,
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(
+                        "http://document-store-service:8089"
+                                + "/api/v1/document-activity?page=0&size=100"))
+                .andExpect(method(HttpMethod.GET))
+                .andExpect(header("X-Service-Token", STORE_READER_TOKEN))
+                .andExpect(header("X-Document-Owner", "nhs-owner"))
+                .andRespond(withSuccess(
+                        "{\"items\":[],\"page\":0,\"totalPages\":0}",
                         MediaType.APPLICATION_JSON));
         server.expect(requestTo(
                         "http://user-profile-service:8085/api/profiles/me"))
