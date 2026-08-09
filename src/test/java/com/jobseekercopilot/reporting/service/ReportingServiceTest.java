@@ -99,6 +99,61 @@ class ReportingServiceTest {
     }
 
     @Test
+    void preservesNhsJobsAsReportingAndJournalEvidence() {
+        ApplicationRecord application = new ApplicationRecord(
+                "application-nhs-c123",
+                "nhs-owner",
+                "canonical-nhs-c123",
+                "canonical-nhs-c123",
+                "NHS_JOBS",
+                "C123",
+                "https://www.jobs.nhs.uk/candidate/jobadvert/C123",
+                "https://www.jobs.nhs.uk/candidate/jobadvert/C123",
+                "Vacancy source: NHS Jobs",
+                "https://www.jobs.nhs.uk/",
+                "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/",
+                "NHS Jobs does not endorse Job Seeker Copilot.",
+                "Community Staff Nurse",
+                "Example NHS Trust",
+                "London",
+                null,
+                null,
+                "APPLIED",
+                LocalDateTime.of(2026, 10, 1, 9, 0),
+                LocalDateTime.of(2026, 10, 1, 9, 0),
+                LocalDateTime.of(2026, 10, 1, 9, 0));
+        ApplicationEvent created = new ApplicationEvent(
+                "APPLICATION_CREATED",
+                null,
+                "APPLIED",
+                Instant.parse("2026-10-01T09:00:00Z"));
+
+        List<ActivityTimelineItem> evidence = service.toTimelineItems(
+                application,
+                created,
+                false);
+
+        assertThat(evidence).singleElement().satisfies(item -> {
+            assertThat(item.evidenceCategory()).isEqualTo("JOB_SEARCH");
+            assertThat(item.provider()).isEqualTo("NHS_JOBS");
+            assertThat(item.jobTitle()).isEqualTo("Community Staff Nurse");
+            assertThat(item.text())
+                    .startsWith("Saved Community Staff Nurse at Example NHS Trust from NHS_JOBS")
+                    .contains("externalVacancyReference=C123")
+                    .contains("canonicalJobId=canonical-nhs-c123")
+                    .contains("listingUrl=https://www.jobs.nhs.uk/candidate/jobadvert/C123")
+                    .contains("applicationUrl=https://www.jobs.nhs.uk/candidate/jobadvert/C123")
+                    .contains("attribution=Vacancy source: NHS Jobs")
+                    .contains("attributionSourceUrl=https://www.jobs.nhs.uk/")
+                    .contains("licenceUrl=https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/")
+                    .contains("noEndorsement=NHS Jobs does not endorse Job Seeker Copilot.");
+        });
+        assertThat(service.journalText(evidence))
+                .contains("01/10/2026 - Saved Community Staff Nurse")
+                .contains("listingUrl=https://www.jobs.nhs.uk/candidate/jobadvert/C123");
+    }
+
+    @Test
     void doesNotDuplicateDocumentEvidenceWhenAnExplicitDocumentEventExists() {
         ApplicationRecord application = record(
                 "DOCUMENTS_GENERATED", "Developer", "Example Ltd", 1);
@@ -397,8 +452,15 @@ class ReportingServiceTest {
         return new ApplicationRecord(
                 null,
                 "user-1",
+                null,
                 "job-" + day,
                 "test",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
                 null,
                 jobTitle,
                 companyName,

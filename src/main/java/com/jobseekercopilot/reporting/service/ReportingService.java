@@ -346,7 +346,8 @@ public class ReportingService {
                 application.provider(),
                 application.jobTitle(),
                 application.companyName(),
-                message(status, application.jobTitle(), application.companyName()));
+                withSourceEvidence(
+                        message(status, application.jobTitle(), application.companyName()), application));
     }
 
     List<ActivityTimelineItem> toTimelineItems(
@@ -417,7 +418,8 @@ public class ReportingService {
                             application.provider(),
                             application.jobTitle(),
                             application.companyName(),
-                            message("DOCUMENTS_GENERATED", application.jobTitle(), application.companyName())));
+                            withSourceEvidence(
+                                    message("DOCUMENTS_GENERATED", application.jobTitle(), application.companyName()), application)));
         }
         return List.of(primary);
     }
@@ -535,7 +537,7 @@ public class ReportingService {
     private String eventMessage(String eventType, String status, ApplicationRecord application) {
         String job = blankToFallback(application.jobTitle(), "role");
         String company = blankToFallback(application.companyName(), "the employer");
-        return switch (eventType) {
+        String message = switch (eventType) {
             case "APPLICATION_CREATED" -> "Saved %s at %s from %s and started tracking it."
                     .formatted(job, company, blankToFallback(application.provider(), "job search"));
             case "APPLICATION_SAVED" ->
@@ -562,6 +564,32 @@ public class ReportingService {
             case "LEGACY_SNAPSHOT" -> "Recorded the existing application state for %s at %s.".formatted(job, company);
             default -> null;
         };
+        return withSourceEvidence(message, application);
+    }
+
+    private String withSourceEvidence(
+            String message, ApplicationRecord application) {
+        if (!"NHS_JOBS".equals(application.provider())) {
+            return message;
+        }
+        return message + " Source evidence: provider=NHS_JOBS"
+                + "; externalVacancyReference="
+                + blankToFallback(application.externalJobId(), "unknown")
+                + "; canonicalJobId="
+                + blankToFallback(application.canonicalJobId(), "unknown")
+                + "; listingUrl="
+                + blankToFallback(application.listingUrl(), "missing")
+                + "; applicationUrl="
+                + blankToFallback(application.applyUrl(), "not-separate")
+                + "; attribution="
+                + blankToFallback(application.attributionLabel(), "missing")
+                + "; attributionSourceUrl="
+                + blankToFallback(application.attributionSourceUrl(), "missing")
+                + "; licenceUrl="
+                + blankToFallback(application.licenceUrl(), "missing")
+                + "; noEndorsement="
+                + blankToFallback(application.disclaimer(), "missing")
+                + ".";
     }
 
     private boolean isDocumentEvent(String eventType) {
@@ -648,8 +676,15 @@ public class ReportingService {
             String id,
             String userId,
             String jobId,
+            String canonicalJobId,
             String provider,
             String externalJobId,
+            String listingUrl,
+            String applyUrl,
+            String attributionLabel,
+            String attributionSourceUrl,
+            String licenceUrl,
+            String disclaimer,
             String jobTitle,
             String companyName,
             String location,
