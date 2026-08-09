@@ -31,7 +31,7 @@ public class OpenApiConfig {
                         .addList("userBearer"))
                 .info(new Info()
                         .title("Jobseeker Copilot - Reporting Service API")
-                        .description("Produces reporting summaries, activity timelines, UC journal text, and commitment progress.")
-                        .version("2.0.0"));
+                        .description("Produces owner-scoped reporting summaries, content-free application/document activity timelines, UC journal text, and commitment progress. Unknown activity fields and event types are never copied into claimant evidence.")
+                        .version("2.1.0"));
     }
 }

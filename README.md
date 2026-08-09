@@ -32,6 +32,25 @@ version actions without document content, file names, hashes, scanner details,
 evidence or notes. Reporting remains a read-only projection and never decides
 document or application state.
 
+The application-centred document journey reports these approved content-free
+activity meanings:
+
+- `APPLICATION_SAVED`
+- `APPLICATION_DOCUMENT_PLAN_SELECTED`
+- `DOCUMENT_UPLOADED`
+- `DOCUMENT_VERSION_CREATED`
+- `DOCUMENT_LINKED_TO_APPLICATION`
+- `DOCUMENT_REPLACED`
+- `DOCUMENT_DELETED`
+
+Tracker selection events are normalised into plan, link and replacement
+meanings only from their bounded content-free state-change description. Event
+IDs are deduplicated across pages, Tracker records and events must match the
+trusted report owner/application, and unknown event types or fields are ignored
+instead of being copied into user evidence. The Document Store feed remains
+owner-scoped by its dedicated reader identity; an upload is reported only when
+its source is explicitly `UPLOADED`.
+
 ## Build
 
 Java 17 and Maven are required.
@@ -82,7 +101,7 @@ explicitly with `OPENAPI_DOCS_ENABLED=true` or `SWAGGER_UI_ENABLED=true`.
 
 ## API contract
 
-The reviewed version 2 contract is in `contracts/openapi.json`. The test suite
+The reviewed version 2.1 contract is in `contracts/openapi.json`. The test suite
 fails if runtime-generated OpenAPI drifts from that file.
 
 ## Licence

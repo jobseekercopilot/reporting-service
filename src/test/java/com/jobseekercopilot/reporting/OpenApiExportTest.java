@@ -33,6 +33,12 @@ class OpenApiExportTest {
         String spec = mockMvc.perform(get("/v3/api-docs"))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
         var generated = objectMapper.readTree(spec);
+        org.junit.jupiter.api.Assertions.assertEquals(
+                "2.1.0", generated.at("/info/version").asText());
+        org.junit.jupiter.api.Assertions.assertTrue(generated
+                .at("/info/description")
+                .asText()
+                .contains("Unknown activity fields and event types"));
         String formatted = objectMapper.writerWithDefaultPrettyPrinter()
                 .writeValueAsString(generated)
                 + System.lineSeparator();
