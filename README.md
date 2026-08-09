@@ -1,5 +1,13 @@
 # Reporting Service
 
+## Role in Job Seeker Copilot
+
+| Role | Called by | Calls | Data | Local port |
+|---|---|---|---|---:|
+| Read-only application/document/profile projection for summaries, timelines and evidence | Reporting Gateway | Application Tracker, Document Store, User Profile | None | 8096 |
+
+Reporting estimates commitment hours from application statuses; it is not an official submission or measured time log. See the central [reporting journey](https://docs.jobseekercopilot.com/journeys/reporting-payments/) and [data ownership](https://docs.jobseekercopilot.com/data/ownership/).
+
 Spring Boot service containing the inherited Job Seeker Copilot reporting
 calculations.
 
