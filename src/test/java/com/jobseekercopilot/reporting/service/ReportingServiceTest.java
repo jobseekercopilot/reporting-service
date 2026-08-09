@@ -162,7 +162,7 @@ class ReportingServiceTest {
                 .andRespond(withSuccess(
                         """
                         [{
-                          "id": "application-1",
+                          "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
                           "userId": "subject-123",
                           "provider": "test",
                           "jobTitle": "Developer",
@@ -171,30 +171,53 @@ class ReportingServiceTest {
                           "createdAt": "2026-10-01T09:00:00",
                           "updatedAt": "2026-10-01T10:00:00",
                           "appliedAt": "2026-10-01T11:00:00"
+                        }, {
+                          "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                          "userId": "different-owner",
+                          "provider": "private-provider",
+                          "jobTitle": "Foreign role",
+                          "companyName": "Foreign employer",
+                          "status": "APPLIED",
+                          "createdAt": "2026-10-01T09:00:00",
+                          "updatedAt": "2026-10-01T10:00:00",
+                          "appliedAt": "2026-10-01T11:00:00"
                         }]
                         """,
                         MediaType.APPLICATION_JSON));
-        server.expect(requestTo("http://application-tracker-service:8088/api/v1/applications/application-1/history?page=0&size=100"))
+        server.expect(requestTo("http://application-tracker-service:8088/api/v1/applications/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/history?page=0&size=100"))
                 .andExpect(method(HttpMethod.GET))
                 .andExpect(header("X-Service-Token", READER_TOKEN))
                 .andExpect(header("X-Application-Owner", "subject-123"))
                 .andRespond(withSuccess(
                         """
                         {
-                          "applicationId": "application-1",
+                          "applicationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
                           "events": [{
+                            "id": "11111111-1111-4111-8111-111111111111",
+                            "applicationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
                             "eventType": "APPLICATION_CREATED",
                             "toStatus": "DOCUMENTS_GENERATED",
                             "occurredAt": "2026-10-01T09:00:00Z"
                           }, {
+                            "id": "22222222-2222-4222-8222-222222222222",
+                            "applicationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
                             "eventType": "DOCUMENT_REFERENCE_CHANGED",
                             "toStatus": "DOCUMENTS_GENERATED",
                             "occurredAt": "2026-10-01T10:00:00Z"
                           }, {
+                            "id": "33333333-3333-4333-8333-333333333333",
+                            "applicationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
                             "eventType": "STATUS_CHANGED",
                             "fromStatus": "DOCUMENTS_GENERATED",
                             "toStatus": "APPLIED",
                             "occurredAt": "2026-10-01T11:00:00Z"
+                          }, {
+                            "id": "44444444-4444-4444-8444-444444444444",
+                            "applicationId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                            "eventType": "APPLICATION_SAVED",
+                            "toStatus": "SAVED",
+                            "occurredAt": "2026-10-01T12:00:00Z",
+                            "reason": "foreign event must not render"
                           }],
                           "page": 0,
                           "totalPages": 1
@@ -232,6 +255,7 @@ class ReportingServiceTest {
 
         assertThat(response.userId()).isEqualTo("subject-123");
         assertThat(response.applicationSummary().applied()).isEqualTo(1);
+        assertThat(response.applicationSummary().total()).isEqualTo(1);
         assertThat(response.commitmentProgress().requiredHours())
                 .isEqualByComparingTo("30");
         assertThat(response.activityTimeline())
@@ -243,11 +267,14 @@ class ReportingServiceTest {
                         "Applied for Developer at Example Ltd.",
                         "Generated or linked application documents for Developer at Example Ltd.",
                         "Saved Developer at Example Ltd from test and started tracking it.");
+        assertThat(response.ucJournalPreview())
+                .doesNotContain("Foreign role")
+                .doesNotContain("foreign event must not render");
         server.verify();
     }
 
     @Test
-    void mergesAllEightContentFreeActivitiesWithStablePagingAndReplayDeduplication() {
+    void reportsApprovedContentFreeActivitiesWithStablePagingAndReplayDeduplication() {
         RestTemplate restTemplate = new RestTemplate();
         MockRestServiceServer server = MockRestServiceServer.bindTo(restTemplate)
                 .ignoreExpectOrder(true)
@@ -260,7 +287,7 @@ class ReportingServiceTest {
                 .andRespond(withSuccess(
                         """
                         [{
-                          "id":"application-1",
+                          "id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
                           "userId":"activity-owner",
                           "provider":"test",
                           "jobTitle":"Developer",
@@ -272,23 +299,25 @@ class ReportingServiceTest {
                         """,
                         MediaType.APPLICATION_JSON));
         server.expect(requestTo(
-                        "http://application-tracker-service:8088/api/v1/applications/application-1/history?page=0&size=100"))
+                        "http://application-tracker-service:8088/api/v1/applications/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/history?page=0&size=100"))
                 .andExpect(header("X-Service-Token", READER_TOKEN))
                 .andExpect(header("X-Application-Owner", "activity-owner"))
                 .andRespond(withSuccess(
                         """
                         {"events":[
-                          {"eventType":"APPLICATION_DOCUMENT_SELECTED","toStatus":"SAVED","occurredAt":"2026-10-01T13:00:00Z","reason":"content must not pass through"},
-                          {"eventType":"APPLICATION_DOCUMENT_SELECTION_CHANGED","toStatus":"SAVED","occurredAt":"2026-10-01T14:00:00Z"}
+                          {"id":"10000000-0000-4000-8000-000000000001","applicationId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","eventType":"APPLICATION_SAVED","toStatus":"SAVED","occurredAt":"2026-10-01T07:00:00Z","reason":"raw creation details must not pass through","recordVersion":0},
+                          {"id":"20000000-0000-4000-8000-000000000002","applicationId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","eventType":"APPLICATION_DOCUMENT_SELECTED","toStatus":"SAVED","occurredAt":"2026-10-01T13:00:00Z","reason":"Atomic application document selections saved: CV selected; cover letter remains omitted.","recordVersion":1},
+                          {"id":"90000000-0000-4000-8000-000000000009","applicationId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","eventType":"FUTURE_RAW_DOCUMENT_EVENT","toStatus":"SAVED","occurredAt":"2026-10-01T16:00:00Z","reason":"TOP-SECRET UNKNOWN EVENT","originalFilename":"private.docx","contentSha256":"forbidden-hash"}
                         ],"page":0,"totalPages":2}
                         """,
                         MediaType.APPLICATION_JSON));
         server.expect(requestTo(
-                        "http://application-tracker-service:8088/api/v1/applications/application-1/history?page=1&size=100"))
+                        "http://application-tracker-service:8088/api/v1/applications/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/history?page=1&size=100"))
                 .andRespond(withSuccess(
                         """
                         {"events":[
-                          {"eventType":"APPLICATION_DOCUMENTS_FROZEN","toStatus":"APPLIED","occurredAt":"2026-10-01T15:00:00Z"}
+                          {"id":"20000000-0000-4000-8000-000000000002","applicationId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","eventType":"APPLICATION_DOCUMENT_SELECTED","toStatus":"SAVED","occurredAt":"2026-10-01T13:00:00Z","reason":"Atomic application document selections saved: CV selected; cover letter remains omitted.","recordVersion":1},
+                          {"id":"30000000-0000-4000-8000-000000000003","applicationId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","eventType":"APPLICATION_DOCUMENT_SELECTION_CHANGED","toStatus":"SAVED","occurredAt":"2026-10-01T14:00:00Z","reason":"Atomic application document selections saved: CV changed; cover letter remains omitted.","recordVersion":2}
                         ],"page":1,"totalPages":2}
                         """,
                         MediaType.APPLICATION_JSON));
@@ -299,9 +328,9 @@ class ReportingServiceTest {
                 .andRespond(withSuccess(
                         """
                         {"items":[
-                          {"id":"11111111-1111-4111-8111-111111111111","eventType":"DOCUMENT_VERSION_CREATED","documentType":"CV","version":2,"result":"CREATED","occurredAt":"2026-10-01T08:00:00Z","content":"TOP-SECRET"},
-                          {"id":"22222222-2222-4222-8222-222222222222","eventType":"DOCUMENT_VERSION_DOWNLOADED","documentType":"CV","version":2,"result":"PREVIOUS_VERSION","occurredAt":"2026-10-01T09:00:00Z","fileName":"private.docx"},
-                          {"id":"33333333-3333-4333-8333-333333333333","eventType":"DOCUMENT_CURRENT_VERSION_CHANGED","documentType":"CV","version":2,"result":"CURRENT_CHANGED","occurredAt":"2026-10-01T10:00:00Z","contentSha256":"forbidden-hash"}
+                          {"id":"40000000-0000-4000-8000-000000000004","eventType":"DOCUMENT_VERSION_CREATED","documentType":"CV","source":"UPLOADED","version":2,"result":"CREATED","occurredAt":"2026-10-01T08:00:00Z","content":"TOP-SECRET DOCUMENT BODY"},
+                          {"id":"50000000-0000-4000-8000-000000000005","eventType":"DOCUMENT_UPLOADED","documentType":"CV","source":"UPLOADED","version":2,"result":"READY","occurredAt":"2026-10-01T09:00:00Z","originalFilename":"private.docx","scannerDetails":"forbidden scanner detail"},
+                          {"id":"80000000-0000-4000-8000-000000000008","eventType":"DOCUMENT_UPLOADED","documentType":"CV","source":"GENERATED","version":4,"result":"READY","occurredAt":"2026-10-01T10:00:00Z","notes":"invalid upload source"}
                         ],"page":0,"totalPages":2}
                         """,
                         MediaType.APPLICATION_JSON));
@@ -310,12 +339,15 @@ class ReportingServiceTest {
                 .andRespond(withSuccess(
                         """
                         {"items":[
-                          {"id":"33333333-3333-4333-8333-333333333333","eventType":"DOCUMENT_CURRENT_VERSION_CHANGED","documentType":"CV","version":2,"result":"CURRENT_CHANGED","occurredAt":"2026-10-01T10:00:00Z"},
-                          {"id":"44444444-4444-4444-8444-444444444444","eventType":"DOCUMENT_VERSION_ARCHIVED","documentType":"COVER_LETTER","version":3,"result":"ARCHIVED","occurredAt":"2026-10-01T11:00:00Z","scannerDetails":"forbidden"},
-                          {"id":"55555555-5555-4555-8555-555555555555","eventType":"DOCUMENT_VERSION_RESTORED","documentType":"COVER_LETTER","version":3,"result":"RESTORED","occurredAt":"2026-10-01T12:00:00Z","notes":"forbidden"}
+                          {"id":"50000000-0000-4000-8000-000000000005","eventType":"DOCUMENT_UPLOADED","documentType":"CV","source":"UPLOADED","version":2,"result":"READY","occurredAt":"2026-10-01T09:00:00Z"},
+                          {"id":"60000000-0000-4000-8000-000000000006","eventType":"DOCUMENT_DELETED","documentType":"COVER_LETTER","source":"UPLOADED","version":3,"result":"RECOVERABLY_DELETED","occurredAt":"2026-10-01T12:00:00Z","objectLocation":"s3://forbidden","token":"forbidden-token"},
+                          {"id":"70000000-0000-4000-8000-000000000007","eventType":"FUTURE_DOCUMENT_EVENT","documentType":"CV","source":"UPLOADED","version":9,"result":"UNKNOWN","occurredAt":"2026-10-01T15:00:00Z","extractedText":"TOP-SECRET EXTRACTED TEXT"}
                         ],"page":1,"totalPages":2}
                         """,
                         MediaType.APPLICATION_JSON));
+        server.expect(requestTo("http://user-profile-service:8085/api/profiles/me"))
+                .andExpect(header("Authorization", "Bearer unused"))
+                .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
 
         ReportingService boundary = new ReportingService(
                 restTemplate,
@@ -325,25 +357,39 @@ class ReportingServiceTest {
                 "http://document-store-service:8089",
                 "http://user-profile-service:8085");
 
-        String journal = boundary.ucJournal(
-                "activity-owner", "unused").journalText();
+        var response = boundary.summary("activity-owner", "unused");
+        String journal = response.ucJournalPreview();
+
+        assertThat(response.activityTimeline())
+                .extracting(ActivityTimelineItem::eventType)
+                .containsExactly(
+                        "DOCUMENT_REPLACED",
+                        "APPLICATION_DOCUMENT_PLAN_SELECTED",
+                        "DOCUMENT_LINKED_TO_APPLICATION",
+                        "DOCUMENT_DELETED",
+                        "DOCUMENT_UPLOADED",
+                        "DOCUMENT_VERSION_CREATED",
+                        "APPLICATION_SAVED");
 
         assertThat(journal.lines()).containsExactly(
-                "01/10/2026 - Froze the exact application document choices when applying for Developer at Example Ltd.",
-                "01/10/2026 - Changed application document choices for Developer at Example Ltd.",
-                "01/10/2026 - Saved application document choices for Developer at Example Ltd.",
-                "01/10/2026 - Restored cover letter version 3.",
-                "01/10/2026 - Archived cover letter version 3.",
-                "01/10/2026 - Made CV version 2 current.",
-                "01/10/2026 - Downloaded previous CV version 2.",
-                "01/10/2026 - Created CV version 2.");
+                "01/10/2026 - Replaced an application document selection for Developer at Example Ltd.",
+                "01/10/2026 - Selected application document choices for Developer at Example Ltd.",
+                "01/10/2026 - Linked selected document versions to the application for Developer at Example Ltd.",
+                "01/10/2026 - Removed cover letter version 3.",
+                "01/10/2026 - Uploaded CV version 2.",
+                "01/10/2026 - Created CV version 2.",
+                "01/10/2026 - Saved Developer at Example Ltd to My Applications.");
         assertThat(journal)
-                .doesNotContain("TOP-SECRET")
+                .doesNotContain("TOP-SECRET DOCUMENT BODY")
+                .doesNotContain("TOP-SECRET UNKNOWN EVENT")
+                .doesNotContain("TOP-SECRET EXTRACTED TEXT")
                 .doesNotContain("private.docx")
                 .doesNotContain("forbidden-hash")
-                .doesNotContain("scannerDetails")
-                .doesNotContain("notes")
-                .doesNotContain("content must not pass through");
+                .doesNotContain("forbidden scanner detail")
+                .doesNotContain("s3://forbidden")
+                .doesNotContain("forbidden-token")
+                .doesNotContain("invalid upload source")
+                .doesNotContain("raw creation details must not pass through");
         server.verify();
     }
 

@@ -9,9 +9,9 @@ import com.jobseekercopilot.reporting.security.ReportingServiceCredentials;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.DayOfWeek;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -206,7 +206,11 @@ public class ReportingService {
                 new HttpEntity<>(headers),
                 new ParameterizedTypeReference<List<ApplicationRecord>>() {},
                 owner).getBody();
-        List<ApplicationRecord> safeApplications = applications == null ? List.of() : applications;
+        List<ApplicationRecord> safeApplications = applications == null
+                ? List.of()
+                : applications.stream()
+                        .filter(application -> owner.equals(application.userId()))
+                        .toList();
         log.info("Application Tracker reporting lookup completed count={} durationMs={}",
                 safeApplications.size(),
                 (System.nanoTime() - startedAt) / 1_000_000);
@@ -219,6 +223,7 @@ public class ReportingService {
         headers.set("X-Service-Token", credentials.applicationTrackerReaderToken());
         headers.set("X-Application-Owner", owner);
         List<ApplicationEvent> events = new ArrayList<>();
+        Set<UUID> seenEventIds = new HashSet<>();
         int page = 0;
         int totalPages;
         do {
@@ -234,7 +239,14 @@ public class ReportingService {
                 break;
             }
             if (history.events() != null) {
-                events.addAll(history.events());
+                history.events().stream()
+                        .filter(event -> event.id() != null)
+                        .filter(event -> application.id() != null
+                                && event.applicationId() != null
+                                && application.id().equals(
+                                        event.applicationId().toString()))
+                        .filter(event -> seenEventIds.add(event.id()))
+                        .forEach(events::add);
             }
             totalPages = Math.max(history.totalPages(), 1);
             page++;
@@ -341,6 +353,52 @@ public class ReportingService {
             ApplicationRecord application,
             ApplicationEvent event,
             boolean hasExplicitDocumentEvent) {
+        if ("APPLICATION_DOCUMENT_SELECTED".equals(event.eventType())) {
+            List<ActivityTimelineItem> items = new ArrayList<>();
+            items.add(applicationActivity(
+                    application,
+                    event,
+                    "APPLICATION_DOCUMENT_PLAN_SELECTED",
+                    "DOCUMENT",
+                    "Selected application document choices for %s at %s."));
+            if (selectionIntroducesDocument(event.reason())) {
+                items.add(applicationActivity(
+                        application,
+                        event,
+                        "DOCUMENT_LINKED_TO_APPLICATION",
+                        "DOCUMENT",
+                        "Linked selected document versions to the application for %s at %s."));
+            }
+            return items.stream().filter(Objects::nonNull).toList();
+        }
+        if ("APPLICATION_DOCUMENT_SELECTION_CHANGED".equals(event.eventType())) {
+            List<ActivityTimelineItem> items = new ArrayList<>();
+            if (selectionIntroducesDocument(event.reason())) {
+                items.add(applicationActivity(
+                        application,
+                        event,
+                        "DOCUMENT_LINKED_TO_APPLICATION",
+                        "DOCUMENT",
+                        "Linked selected document versions to the application for %s at %s."));
+            }
+            if (selectionReplacesDocument(event.reason())) {
+                items.add(applicationActivity(
+                        application,
+                        event,
+                        "DOCUMENT_REPLACED",
+                        "DOCUMENT",
+                        "Replaced an application document selection for %s at %s."));
+            }
+            if (items.isEmpty()) {
+                items.add(applicationActivity(
+                        application,
+                        event,
+                        event.eventType(),
+                        "DOCUMENT",
+                        "Changed application document choices for %s at %s."));
+            }
+            return items.stream().filter(Objects::nonNull).toList();
+        }
         ActivityTimelineItem primary = toTimelineItem(application, event);
         if (primary == null) {
             return List.of();
@@ -371,6 +429,10 @@ public class ReportingService {
             return null;
         }
         String status = blankToFallback(event.toStatus(), statusName(application));
+        String text = eventMessage(event.eventType(), status, application);
+        if (text == null) {
+            return null;
+        }
         return new ActivityTimelineItem(
                 application.id(),
                 LocalDateTime.ofInstant(event.occurredAt(), ZoneOffset.UTC),
@@ -380,20 +442,58 @@ public class ReportingService {
                 application.provider(),
                 application.jobTitle(),
                 application.companyName(),
-                eventMessage(event.eventType(), status, application));
+                text);
+    }
+
+    private ActivityTimelineItem applicationActivity(
+            ApplicationRecord application,
+            ApplicationEvent event,
+            String reportedEventType,
+            String category,
+            String messageTemplate) {
+        if (event.occurredAt() == null) {
+            return null;
+        }
+        String job = blankToFallback(application.jobTitle(), "role");
+        String company = blankToFallback(
+                application.companyName(), "the employer");
+        return new ActivityTimelineItem(
+                application.id(),
+                LocalDateTime.ofInstant(event.occurredAt(), ZoneOffset.UTC),
+                reportedEventType,
+                category,
+                blankToFallback(event.toStatus(), statusName(application)),
+                application.provider(),
+                application.jobTitle(),
+                application.companyName(),
+                messageTemplate.formatted(job, company));
     }
 
     private ActivityTimelineItem toTimelineItem(DocumentActivityEvent event) {
         if (event.occurredAt() == null
                 || event.eventType() == null
                 || event.documentType() == null
-                || event.version() < 1) {
+                || event.version() < 1
+                || !("CV".equals(event.documentType())
+                        || "COVER_LETTER".equals(event.documentType()))) {
             return null;
         }
         String document = documentLabel(event.documentType());
         String text = switch (event.eventType()) {
             case "DOCUMENT_VERSION_CREATED" ->
                     "Created %s version %d.".formatted(document, event.version());
+            case "DOCUMENT_UPLOADED" ->
+                    "Uploaded %s version %d."
+                            .formatted(document, event.version());
+            case "DOCUMENT_LINKED_TO_APPLICATION" ->
+                    "Linked %s version %d to an application."
+                            .formatted(document, event.version());
+            case "DOCUMENT_REPLACED" ->
+                    "Replaced %s with version %d."
+                            .formatted(document, event.version());
+            case "DOCUMENT_DELETED" ->
+                    "Removed %s version %d."
+                            .formatted(document, event.version());
             case "DOCUMENT_VERSION_DOWNLOADED" ->
                     "Downloaded %s %s version %d."
                             .formatted(
@@ -416,6 +516,10 @@ public class ReportingService {
         if (text == null) {
             return null;
         }
+        if ("DOCUMENT_UPLOADED".equals(event.eventType())
+                && !"UPLOADED".equals(event.source())) {
+            return null;
+        }
         return new ActivityTimelineItem(
                 null,
                 LocalDateTime.ofInstant(event.occurredAt(), ZoneOffset.UTC),
@@ -434,16 +538,29 @@ public class ReportingService {
         return switch (eventType) {
             case "APPLICATION_CREATED" -> "Saved %s at %s from %s and started tracking it."
                     .formatted(job, company, blankToFallback(application.provider(), "job search"));
+            case "APPLICATION_SAVED" ->
+                    "Saved %s at %s to My Applications."
+                            .formatted(job, company);
             case "STATUS_CHANGED" -> message(status, application.jobTitle(), application.companyName());
             case "DOCUMENT_REFERENCE_CHANGED" -> "Generated or linked application documents for %s at %s.".formatted(job, company);
             case "DOCUMENT_REFERENCES_RECONCILED" -> "Verified stored application documents for %s at %s.".formatted(job, company);
-            case "APPLICATION_DOCUMENT_SELECTED" -> "Saved application document choices for %s at %s.".formatted(job, company);
-            case "APPLICATION_DOCUMENT_SELECTION_CHANGED" -> "Changed application document choices for %s at %s.".formatted(job, company);
+            case "APPLICATION_DOCUMENT_PLAN_SELECTED" ->
+                    "Selected application document choices for %s at %s."
+                            .formatted(job, company);
+            case "DOCUMENT_LINKED_TO_APPLICATION" ->
+                    "Linked selected document versions to the application for %s at %s."
+                            .formatted(job, company);
+            case "DOCUMENT_REPLACED" ->
+                    "Replaced an application document selection for %s at %s."
+                            .formatted(job, company);
+            case "DOCUMENT_DELETED" ->
+                    "Removed an application document selection for %s at %s."
+                            .formatted(job, company);
             case "APPLICATION_DOCUMENTS_FROZEN" -> "Froze the exact application document choices when applying for %s at %s.".formatted(job, company);
             case "GENERATED_APPLICATION_WITHDRAWN" -> "Withdrew generated application materials for %s at %s.".formatted(job, company);
             case "APPLICATION_DELETED" -> "Removed the tracked application for %s at %s.".formatted(job, company);
             case "LEGACY_SNAPSHOT" -> "Recorded the existing application state for %s at %s.".formatted(job, company);
-            default -> "Updated application evidence for %s at %s.".formatted(job, company);
+            default -> null;
         };
     }
 
@@ -452,8 +569,24 @@ public class ReportingService {
                 || "DOCUMENT_REFERENCES_RECONCILED".equals(eventType)
                 || "APPLICATION_DOCUMENT_SELECTED".equals(eventType)
                 || "APPLICATION_DOCUMENT_SELECTION_CHANGED".equals(eventType)
+                || "APPLICATION_DOCUMENT_PLAN_SELECTED".equals(eventType)
+                || "DOCUMENT_LINKED_TO_APPLICATION".equals(eventType)
+                || "DOCUMENT_REPLACED".equals(eventType)
+                || "DOCUMENT_DELETED".equals(eventType)
                 || "APPLICATION_DOCUMENTS_FROZEN".equals(eventType)
                 || "GENERATED_APPLICATION_WITHDRAWN".equals(eventType);
+    }
+
+    private boolean selectionIntroducesDocument(String reason) {
+        return normalizedSelectionReason(reason).contains(" selected");
+    }
+
+    private boolean selectionReplacesDocument(String reason) {
+        return normalizedSelectionReason(reason).contains(" changed");
+    }
+
+    private String normalizedSelectionReason(String reason) {
+        return reason == null ? "" : reason.toLowerCase(Locale.ROOT);
     }
 
     private String categoryForEvent(String eventType) {
@@ -461,8 +594,10 @@ public class ReportingService {
             case "APPLICATION_CREATED" -> "JOB_SEARCH";
             case "DOCUMENT_REFERENCE_CHANGED",
                     "DOCUMENT_REFERENCES_RECONCILED",
-                    "APPLICATION_DOCUMENT_SELECTED",
-                    "APPLICATION_DOCUMENT_SELECTION_CHANGED",
+                    "APPLICATION_DOCUMENT_PLAN_SELECTED",
+                    "DOCUMENT_LINKED_TO_APPLICATION",
+                    "DOCUMENT_REPLACED",
+                    "DOCUMENT_DELETED",
                     "APPLICATION_DOCUMENTS_FROZEN",
                     "GENERATED_APPLICATION_WITHDRAWN" -> "DOCUMENT";
             default -> "APPLICATION";
@@ -534,10 +669,29 @@ public class ReportingService {
     }
 
     record ApplicationEvent(
+            UUID id,
+            UUID applicationId,
             String eventType,
             String fromStatus,
             String toStatus,
-            Instant occurredAt) {
+            Instant occurredAt,
+            String reason,
+            long recordVersion) {
+        ApplicationEvent(
+                String eventType,
+                String fromStatus,
+                String toStatus,
+                Instant occurredAt) {
+            this(
+                    null,
+                    null,
+                    eventType,
+                    fromStatus,
+                    toStatus,
+                    occurredAt,
+                    null,
+                    0);
+        }
     }
 
     record DocumentActivityPage(
