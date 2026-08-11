@@ -14,7 +14,8 @@ calculations.
 ## Current scope
 
 The service calculates an application-status summary, a recent-activity list, an
-indicative commitment-progress value, and text currently named a UC journal. It is
+indicative commitment-progress value, text currently named a UC journal, and a
+plain-text evidence export. It is
 not yet a complete beta-ready reporting product; the remaining product and data
 coverage findings are recorded in
 [`docs/BETA_READINESS_AUDIT.md`](docs/BETA_READINESS_AUDIT.md).
@@ -101,7 +102,8 @@ explicitly with `OPENAPI_DOCS_ENABLED=true` or `SWAGGER_UI_ENABLED=true`.
 
 ## API contract
 
-The reviewed version 2.1 contract is in `contracts/openapi.json`. The test suite
+The reviewed version 2.1 contract is in `contracts/openapi.json`; it exposes
+`/summary`, `/uc-journal` and `/evidence.txt`. The test suite
 fails if runtime-generated OpenAPI drifts from that file.
 
 ## Licence
