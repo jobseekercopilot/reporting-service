@@ -6,6 +6,22 @@ Decision: **Not ready for private beta**
 This document records the inherited implementation without changing its product
 behaviour. The repository was created as a sanitised audit baseline only.
 
+## Post-audit implementation progress
+
+The dated findings below remain the audit baseline rather than a description of
+the current source tree. Subsequent scoped Stories replaced local client JARs
+with authenticated source-controlled HTTP adapters, added persisted Application
+Tracker history and Document Store activity, and made the build reproducible.
+
+Feature `document-generation-gateway#38` / Reporting Story #18 additionally
+projects the approved saved-application and document-choice meanings without
+copying event payloads. It deduplicates event IDs across pages, rejects Tracker
+records/events outside the trusted owner/application, ignores unknown event
+types and fields, and redaction-tests document content, extracted text,
+filenames, notes, hashes, scanner details, tokens and object locations. This
+does not close the audit's separate date-range, terminology, user-control,
+performance, commitment-metric or full E2E findings.
+
 ## Verified behaviour
 
 - Fetches current applications from Application Tracker by user ID.

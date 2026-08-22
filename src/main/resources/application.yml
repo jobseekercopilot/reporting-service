@@ -8,8 +8,23 @@ server:
 services:
   application-tracker-service:
     base-url: ${APPLICATION_TRACKER_SERVICE_BASE_URL:http://application-tracker-service:8088}
+  document-store-service:
+    base-url: ${DOCUMENT_STORE_SERVICE_URL:http://document-store-service:8089}
   user-profile-service:
     base-url: ${USER_PROFILE_SERVICE_URL:http://user-profile-service:8085}
+
+reporting:
+  security:
+    gateway-token: ${REPORTING_GATEWAY_SERVICE_TOKEN:}
+    application-tracker-reader-token: ${APPLICATION_TRACKER_READER_TOKEN:}
+    document-store-reader-token: ${DOCUMENT_STORE_READER_TOKEN:}
+
+springdoc:
+  api-docs:
+    enabled: ${OPENAPI_DOCS_ENABLED:false}
+    version: openapi-3-0
+  swagger-ui:
+    enabled: ${SWAGGER_UI_ENABLED:false}
 
 management:
   endpoints:
